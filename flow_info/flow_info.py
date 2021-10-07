@@ -1,5 +1,5 @@
-import sys
 import pandas as pd
+
 from globus_automate_client import create_flows_client
 
 class FlowInfo:

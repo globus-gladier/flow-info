@@ -1,0 +1,6 @@
+globus_automate_client
+numpy
+pandas
+matplotlib
+seaborn
+
