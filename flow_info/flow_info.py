@@ -161,7 +161,7 @@ class FlowInfo:
 
         f = plt.figure()
         df.plot.hist(bins=20, alpha=0.5, ax=f.gca())
-        plt.legend(self.flow_order, loc='center left', bbox_to_anchor=(1.0, 0.5), fontsize=18)
+        plt.legend(cols, loc='center left', bbox_to_anchor=(1.0, 0.5), fontsize=18)
         plt.ylabel('Frequency', fontsize=18, color='black')
         plt.xlabel('Time (s)', fontsize=18, color='black')
         plt.tick_params(axis='both', which='major', pad=-1, labelsize=18, labelcolor='black')
