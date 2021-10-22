@@ -24,22 +24,43 @@ class FlowInfo:
         self.flow_id = flow_id
         self.flow_scope = flow_scope
         self.flow_runs = []
-        
-        # TODO deal with pagination
-        run_res = self.fc.list_flow_runs(flow_id=flow_id)
+        self.flow_order = []
+
+        self.flow_runs = self.get_flow_runs(self.flow_id, limit)
+        print(f"Found {len(self.flow_runs)} flow runs.")
+
+        self.flow_logs = self._extract_times(flow_id, flow_scope, self.flow_runs)
+        print(f"Loaded {len(self.flow_runs)} runs.")
+
+    def get_flow_runs(self, flow_id, limit):
+        """Get the runs of the flow using pagination.
+
+        Args:
+            flow_id (str): The flow id to use
+            limit (int): Max flows to return
+        """
+        res_runs = []
+        all_runs = []
+
+        runs = self.fc.list_flow_runs(flow_id=flow_id, role="monitor_by")
+        all_runs = all_runs + runs['actions']
+        # Iterate through pages to collect more
+        while runs['has_next_page']:
+            if len(all_runs) >= limit:
+                break
+            print('Getting more runs')
+            runs = self.fc.list_flow_runs(flow_id=flow_id, marker=runs['marker'])
+            all_runs = all_runs + runs['actions']
         
         # Skip flows that didn't succeed
-        for fr in run_res['actions']:
+        for fr in all_runs:
             if fr['status'] == "SUCCEEDED":
-                self.flow_runs.append(fr)
+                res_runs.append(fr)
 
+        # Cut down to limit size
+        res_runs = res_runs[:limit]
+        return res_runs
 
-        self.flow_runs = self.flow_runs[:limit]
-        
-        self.flow_logs = self._extract_times(flow_id, flow_scope, self.flow_runs)
-
-        print(f"Loaded {len(self.flow_runs)} runs.")
-    
     def describe_runtimes(self):
         """Print out summary stats for each step
         """
@@ -47,15 +68,15 @@ class FlowInfo:
             print("No flows data loaded.")
             return
 
-        for c in self.flow_logs.keys():
-            if 'flow_runtime' in c:
-                print(f"Flow:\t mean {int(self.flow_logs[c].mean())}s, "\
-                      f"min {int(self.flow_logs[c].min())}s, "\
-                      f"max {int(self.flow_logs[c].max())}s")
-            elif '_runtime' in c:
-                print(f"Step {c[0]}:\t mean {int(self.flow_logs[c].mean())}s, "\
-                      f"min {int(self.flow_logs[c].min())}s, "\
-                      f"max {int(self.flow_logs[c].max())}s")
+        print(f"Flow:\t mean {int(self.flow_logs['flow_runtime'].mean())}s, "\
+              f"min {int(self.flow_logs['flow_runtime'].min())}s, "\
+              f"max {int(self.flow_logs['flow_runtime'].max())}s")
+
+        for step in self.flow_order:
+            c = f"{step}_runtime"
+            print(f"{step}:\t mean {int(self.flow_logs[c].mean())}s, "\
+                  f"min {int(self.flow_logs[c].min())}s, "\
+                  f"max {int(self.flow_logs[c].max())}s")
 
     def _extract_times(self, flow_id, flow_scope, flow_runs):
         """Extract the timings from the flow logs and create a dataframe
@@ -76,7 +97,8 @@ class FlowInfo:
             flow_res['end'] = flow_run['completion_time']
 
             flow_logs = self.fc.flow_action_log(flow_id, flow_scope, flow_run['action_id'], limit=100)
-            flow_steps = self._extract_step_times(flow_logs)
+            flow_steps, flow_order  = self._extract_step_times(flow_logs)
+            self.flow_order = flow_order
             flow_res.update(flow_steps)
             flowdf = pd.DataFrame([flow_res])
             # Convert timing strings
@@ -86,12 +108,13 @@ class FlowInfo:
                 
             # Compute runtime fields
             flowdf['flow_runtime'] = flowdf['end'] - flowdf['start']
-            for step in range(int(len(flow_steps)/2)):
+            for step in flow_order:
                 flowdf[f'{step}_runtime'] = flowdf[f'{step}_end'] - flowdf[f'{step}_start']
                 
-            all_res = all_res.append(flowdf, ignore_index=True)        
-        all_res = all_res.sort_values(by=['start'])
-        all_res = all_res.reset_index(drop=True)
+            all_res = all_res.append(flowdf, ignore_index=True)
+        if len(all_res) > 0:
+            all_res = all_res.sort_values(by=['start'])
+            all_res = all_res.reset_index(drop=True)
         return all_res
 
     def _extract_step_times(self, flow_logs):
@@ -105,23 +128,21 @@ class FlowInfo:
         """
         
         mylogs = flow_logs['entries']
-        mylogs.reverse()
+        steps = []
         res = {}
-        start_ts = []
-        end_ts = []
-        for x in range(len(mylogs)):
+
+        for x in range(len(mylogs)):            
             if 'Action' not in mylogs[x]['code']:
                 continue
             if 'ActionStarted' in mylogs[x]['code']:
-                start_ts.append(mylogs[x]['time'])
+                name = mylogs[x]['details']['state_name']
+                res[f'{name}_start'] = mylogs[x]['time']
+                steps.append(name)
             if 'ActionCompleted' in mylogs[x]['code']:
-                end_ts.append(mylogs[x]['time'])
-
-        for x in range(len(start_ts)):
-            res[f'{x}_start'] = start_ts[x]
-            res[f'{x}_end'] = end_ts[x]
-
-        return res
+                name = mylogs[x]['details']['state_name']
+                res[f'{name}_end'] = mylogs[x]['time']
+        
+        return res, steps
 
     def plot_histogram(self, include=None):
         """Create a histogram of the step runtimes
@@ -129,13 +150,21 @@ class FlowInfo:
         Args:
             include (list, optional): The list of steps to plot, e.g. ['flow', '1', '2']. Defaults to None.
         """
+        import matplotlib.pyplot as plt
+
         cols = []
         for c in self.flow_logs.keys():
             if '_runtime' in c:
                 if not include or c.replace("_runtime", "") in include:
                     cols.append(c)
         df = self.flow_logs[cols]
-        df.plot.hist(bins=20, alpha=0.5)
+
+        f = plt.figure()
+        df.plot.hist(bins=20, alpha=0.5, ax=f.gca())
+        plt.legend(self.flow_order, loc='center left', bbox_to_anchor=(1.0, 0.5), fontsize=18)
+        plt.ylabel('Frequency', fontsize=18, color='black')
+        plt.xlabel('Time (s)', fontsize=18, color='black')
+        plt.tick_params(axis='both', which='major', pad=-1, labelsize=18, labelcolor='black')
 
 
     def plot_gantt(self, limit=None, show_relative_time=True):
@@ -159,12 +188,6 @@ class FlowInfo:
             tasks = tasks.tail(limit)
             tasks = tasks.reset_index(drop=True)
         
-        # Get the names of the steps
-        action_result_names = []
-        for t in tasks:
-            if "_runtime" in t and 'flow' not in t:
-                action_result_names.append(t.replace("_runtime", ""))
-
         # Convert to relative time
         if show_relative_time:
             pd.options.display.float_format = '{:.5f}'.format
@@ -175,7 +198,7 @@ class FlowInfo:
                     tasks[c] = tasks[c] - start
 
         # Plot from dataframe
-        fig, gnt = plt.subplots(figsize=(16, 12))
+        fig, gnt = plt.subplots(figsize=(12, 9))
         gnt.set_ylim(0, (len(tasks) + 1) * 10)
         gnt.grid(True) 
         gnt.set_yticks([(i+1) * 10 + 3 for i in range(len(tasks))]) 
@@ -183,26 +206,29 @@ class FlowInfo:
 
         for i, task in tasks.iterrows():
             flow_start = task['start']       
-            for j, step in enumerate(action_result_names):
+            for j, step in enumerate(self.flow_order):
                 step_start, step_end = task[f'{step}_start'], task[f'{step}_end'] - task[f'{step}_start']
                 if j == 0:
                     gnt.broken_barh([(flow_start, step_start-flow_start)], ((i+1)*10, 6), facecolor=colors[0], edgecolor='black')
                 gnt.broken_barh([(step_start, step_end)], ((i+1)*10, 6), facecolor=colors[j+1], edgecolor='black')
             flow_end = task['end'] - task[f'{step}_end']
-        gnt.legend(['Flow start'] + action_result_names,
+        gnt.legend(self.flow_order,
                     #'Flow finishing'],
-                fontsize=15)
-        gnt.set_ylabel('Flow', fontsize=17, color='black')
-        gnt.set_xlabel('Time (s)', fontsize=17, color='black')
-        gnt.tick_params(axis='both', which='major', pad=-1, labelsize=17, labelcolor='black')
+                fontsize=25, loc='upper left')
+        gnt.set_ylabel('Flow', fontsize=25, color='black')
+        gnt.set_xlabel('Time (s)', fontsize=25, color='black')
+        gnt.tick_params(axis='both', which='major', pad=-1, labelsize=25, labelcolor='black')
 
 
 if __name__ == "__main__":
 
-    flow_id = '3ba38fba-feee-42d1-8c99-8ce3b812fe49'
-    flow_scope = 'https://auth.globus.org/scopes/3ba38fba-feee-42d1-8c99-8ce3b812fe49/flow_3ba38fba_feee_42d1_8c99_8ce3b812fe49_user'
+    flow_id = '13630c87-e8f9-41c7-b2f3-dc0a5c66d5c7'
+    # flow_id = '3ba38fba-feee-42d1-8c99-8ce3b812fe49'
+    flow_scope = f"https://auth.globus.org/scopes/{flow_id}/flow_{flow_id.replace('-','_')}_user"
+    # flow_id = '3ba38fba-feee-42d1-8c99-8ce3b812fe49'
+    # flow_scope = 'https://auth.globus.org/scopes/3ba38fba-feee-42d1-8c99-8ce3b812fe49/flow_3ba38fba_feee_42d1_8c99_8ce3b812fe49_user'
     
     fi = FlowInfo()
-    fi.load(flow_id, flow_scope, limit=3)
+    fi.load(flow_id, flow_scope, limit=2)
 
     fi.describe_runtimes()
