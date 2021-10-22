@@ -156,7 +156,7 @@ class FlowInfo:
         for c in self.flow_logs.keys():
             if '_runtime' in c:
                 if not include or c.replace("_runtime", "") in include:
-                    cols.append(c)
+                    cols.append(c.replace("_runtime", ""))
         df = self.flow_logs[cols]
 
         f = plt.figure()
