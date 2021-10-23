@@ -153,15 +153,21 @@ class FlowInfo:
         import matplotlib.pyplot as plt
 
         cols = []
+        labels = []
         for c in self.flow_logs.keys():
             if '_runtime' in c:
                 if not include or c.replace("_runtime", "") in include:
-                    cols.append(c.replace("_runtime", ""))
+                    cols.append(c)
+                    if c == "flow_runtime":
+                        labels.append("Total runtime")
+                    else:
+                        labels.append(c.replace("_runtime", ""))
+                    
         df = self.flow_logs[cols]
 
         f = plt.figure()
         df.plot.hist(bins=20, alpha=0.5, ax=f.gca())
-        plt.legend(cols, loc='center left', bbox_to_anchor=(1.0, 0.5), fontsize=18)
+        plt.legend(labels, loc='center left', bbox_to_anchor=(1.0, 0.5), fontsize=18)
         plt.ylabel('Frequency', fontsize=18, color='black')
         plt.xlabel('Time (s)', fontsize=18, color='black')
         plt.tick_params(axis='both', which='major', pad=-1, labelsize=18, labelcolor='black')
@@ -205,12 +211,12 @@ class FlowInfo:
         gnt.set_yticklabels(range(len(tasks)))
 
         for i, task in tasks.iterrows():
-            flow_start = task['start']       
+            # flow_start = task['start']       
             for j, step in enumerate(self.flow_order):
                 step_start, step_end = task[f'{step}_start'], task[f'{step}_end'] - task[f'{step}_start']
-                if j == 0:
-                    gnt.broken_barh([(flow_start, step_start-flow_start)], ((i+1)*10, 6), facecolor=colors[0], edgecolor='black')
-                gnt.broken_barh([(step_start, step_end)], ((i+1)*10, 6), facecolor=colors[j+1], edgecolor='black')
+                # if j == 0:
+                    # gnt.broken_barh([(flow_start, step_start-flow_start)], ((i+1)*10, 6), facecolor=colors[0], edgecolor='black')
+                gnt.broken_barh([(step_start, step_end)], ((i+1)*10, 6), facecolor=colors[j], edgecolor='black')
             flow_end = task['end'] - task[f'{step}_end']
         gnt.legend(self.flow_order,
                     #'Flow finishing'],
