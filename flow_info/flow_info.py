@@ -11,7 +11,8 @@ class FlowInfo:
         self.flow_id = None
         self.flow_scope = None
         self.flow_runs = []
-        self.flow_logs = None
+        self.flow_logs = {}
+        self.action_logs = None
 
     def load(self, flow_id, flow_scope, limit=100):
         """Load a flow's executions
@@ -25,12 +26,36 @@ class FlowInfo:
         self.flow_scope = flow_scope
         self.flow_runs = []
         self.flow_order = []
+        self.action_logs = {}
 
         self.flow_runs = self.get_flow_runs(self.flow_id, limit)
         print(f"Found {len(self.flow_runs)} flow runs.")
 
-        self.flow_logs = self._extract_times(flow_id, flow_scope, self.flow_runs)
+        self.step_types = self._get_step_types(self.flow_id)
+
+        self.flow_logs, self.action_logs = self._extract_times(flow_id, flow_scope, self.flow_runs)
         print(f"Loaded {len(self.flow_runs)} runs.")
+
+
+    def _get_step_types(self, flow_id):
+        """Get the type associated with each step.
+
+        Args:
+            flow_id (str): The id of the flow
+        
+        Returns:
+            Dict: A dict of step name and action url
+        """
+
+        flow_dfn = self.fc.get_flow(flow_id).data
+
+        flow_dfn['definition']['States']
+
+        steps = {}
+        for x in flow_dfn['definition']['States']:
+            steps[x] = flow_dfn['definition']['States'][x]['ActionUrl']
+
+        return steps
 
     def get_flow_runs(self, flow_id, limit):
         """Get the runs of the flow using pagination.
@@ -75,21 +100,43 @@ class FlowInfo:
         for step in self.flow_order:
             c = f"{step}_runtime"
             print(f"{step}:\t mean {int(self.flow_logs[c].mean())}s, "\
+                  f"median {int(self.flow_logs[c].median())}s, "\
+                  f"std {int(self.flow_logs[c].std())}s, "\
                   f"min {int(self.flow_logs[c].min())}s, "\
                   f"max {int(self.flow_logs[c].max())}s")
+
+
+    def describe_usage(self):
+        """Print out usage stats for each flow
+        """
+        if self.flow_logs is None:
+            print("No flows data loaded.")
+            return
+
+        mean_bytes = int(self.flow_logs['total_bytes_transferred'].mean())
+        mean_gb = mean_bytes / (1024*1024*1024)
+        sum_bytes = int(self.flow_logs['total_bytes_transferred'].sum())
+        sum_gb = sum_bytes / (1024*1024*1024)
+        print(f"Bytes Transferred:\t mean {mean_gb:.3f}GB, "\
+              f"Total {sum_gb:.3f}GB")
+
+        print(f"funcX Time:\t mean {int(self.flow_logs['total_funcx_time'].mean())}s, "\
+              f"Total {int(self.flow_logs['total_funcx_time'].sum())}s")
 
     def _extract_times(self, flow_id, flow_scope, flow_runs):
         """Extract the timings from the flow logs and create a dataframe
 
         Args:
-            flow_id (str]): The flow uuid
+            flow_id (str): The flow uuid
             flow_scope (str): The flow scope
             flow_runs (dict): A dict of flow runs
 
         Returns:
             DataFrame: A dataframe of the flow execution steps
+            Dict: A dict of step name to bytes transferred
         """
         all_res = pd.DataFrame()
+        action_logs = {}
         for flow_run in flow_runs:
             flow_res = {}
             flow_res['action_id'] = flow_run['action_id']
@@ -97,25 +144,97 @@ class FlowInfo:
             flow_res['end'] = flow_run['completion_time']
 
             flow_logs = self.fc.flow_action_log(flow_id, flow_scope, flow_run['action_id'], limit=100)
-            flow_steps, flow_order  = self._extract_step_times(flow_logs)
+            action_logs[flow_res['action_id']] = flow_logs.data['entries'][-1]
+            
+            # Get step timing info. this gives a _runtime field for each step
+            flow_steps, flow_order = self._extract_step_times(flow_logs)
             self.flow_order = flow_order
             flow_res.update(flow_steps)
+            
+            # Pull out bytes transferred from any Transfer steps
+            bytes_transferred = self._extract_bytes_transferred(flow_logs)
+            flow_res.update(bytes_transferred)
+
+            # Get the list of funcx task uuids to later track function execution time
+            funcx_task_ids = self._extract_funcx_info(flow_logs)
+            flow_res['funcx_task_ids'] = funcx_task_ids
+
             flowdf = pd.DataFrame([flow_res])
             # Convert timing strings
             convert_columns = list(flowdf.columns)[1:]  # Not inlcude action id
             for c in convert_columns:
-                flowdf[c] = (pd.to_datetime(flowdf[c]).dt.tz_localize(None) - pd.Timestamp("1970-01-01")) / pd.Timedelta('1s')
-                
-            # Compute runtime fields
+                if 'start' in c or 'end' in c:
+                    flowdf[c] = (pd.to_datetime(flowdf[c]).dt.tz_localize(None) - pd.Timestamp("1970-01-01")) / pd.Timedelta('1s')
+            
+            # Get a list of all the fx 
+            fx_steps = []
+            for step, ap in self.step_types.items():
+                if 'funcx' in ap:
+                    fx_steps.append(step)
+            total_fx_time = 0
+
+            # Compute runtime fields and add together fx total time
             flowdf['flow_runtime'] = flowdf['end'] - flowdf['start']
             for step in flow_order:
                 flowdf[f'{step}_runtime'] = flowdf[f'{step}_end'] - flowdf[f'{step}_start']
-                
+                if step in fx_steps:
+                    total_fx_time += flowdf[f'{step}_runtime']
+            flowdf['total_funcx_time'] = total_fx_time
+
             all_res = all_res.append(flowdf, ignore_index=True)
         if len(all_res) > 0:
             all_res = all_res.sort_values(by=['start'])
             all_res = all_res.reset_index(drop=True)
-        return all_res
+        return all_res, action_logs
+
+
+    def _extract_bytes_transferred(self, flow_logs):
+        """Extract the bytes moved by Transfer steps
+
+        Args:
+            flow_logs (dict): A log of the flow's steps
+
+        Returns:
+            dict: A dict of the bytes moved for each step
+        """
+        flow_log = flow_logs['entries'][-1]
+
+        transfer_usage = {}
+        total_bytes_transferred = 0
+        for k, v in flow_log['details']['output'].items():
+            if 'details' in v:
+                if 'bytes_transferred' in v['details']:
+                    transfer_usage[f"{k}_bytes_transferred"] = v['details']['bytes_transferred']
+                    total_bytes_transferred += v['details']['bytes_transferred']
+        
+        transfer_usage['total_bytes_transferred'] = total_bytes_transferred
+        return transfer_usage
+
+    def _extract_funcx_info(self, flow_logs):
+        """Extract funcx task information. Work out function uuids and the runtime of all tasks
+
+        Args:
+            flow_logs (dict): A log of the flow's steps
+
+        Returns:
+            dict: A dict of funcx runtimes and a list of tasks
+        """
+
+        fx_steps = []
+        for step, ap in self.step_types.items():
+            if 'funcx' in ap:
+                fx_steps.append(step)
+
+        fx_ids = []
+        
+        flow_log = flow_logs['entries'][-1]
+
+        for k, v in flow_log['details']['output'].items():
+            if k in fx_steps:
+                fx_ids.append(v['action_id'])
+
+        return fx_ids
+
 
     def _extract_step_times(self, flow_logs):
         """Extract start and stop times from a flow's logs
@@ -228,13 +347,12 @@ class FlowInfo:
 
 if __name__ == "__main__":
 
-    flow_id = '13630c87-e8f9-41c7-b2f3-dc0a5c66d5c7'
-    # flow_id = '3ba38fba-feee-42d1-8c99-8ce3b812fe49'
+    flow_id = '5b91c6f4-09f5-442a-aadb-b19041cd8d6e'
     flow_scope = f"https://auth.globus.org/scopes/{flow_id}/flow_{flow_id.replace('-','_')}_user"
-    # flow_id = '3ba38fba-feee-42d1-8c99-8ce3b812fe49'
-    # flow_scope = 'https://auth.globus.org/scopes/3ba38fba-feee-42d1-8c99-8ce3b812fe49/flow_3ba38fba_feee_42d1_8c99_8ce3b812fe49_user'
-    
+
     fi = FlowInfo()
     fi.load(flow_id, flow_scope, limit=2)
 
     fi.describe_runtimes()
+
+    fi.describe_usage()
