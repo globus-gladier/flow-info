@@ -1,3 +1,9 @@
+# Flows generated data
+data/
+gantt.png
+histogram.png
+
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
