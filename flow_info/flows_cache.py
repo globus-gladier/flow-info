@@ -4,6 +4,7 @@ import os
 import pathlib
 import configobj
 import logging
+import functools
 import globus_sdk
 
 
@@ -60,6 +61,7 @@ class FlowsCache:
         )
         return globus_sdk.FlowsClient(app=app)
 
+    @functools.cache
     def _load_data(self, filename: str):
         path = pathlib.Path(self.basepath) / filename
         log.debug(f"Loading: {path}")
