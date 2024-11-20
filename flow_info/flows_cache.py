@@ -150,7 +150,7 @@ class FlowsCache:
         log.info(f'Fetched {len(flows["flows"])} Flows from service.')
         self._save_data(self.flows_list_filename, flows)
 
-    def get_last_run_in_runs(self, runs):
+    def get_last_cached_run(self, runs):
         if not runs:
             return dict()
         return sorted(runs, key=lambda x: x["completion_time"], reverse=True)[0]
@@ -169,13 +169,12 @@ class FlowsCache:
         flows = self.flows
 
         last_run = self.get_last_run()
-        last_cached_run = self.get_last_run_in_runs(runs)
+        last_cached_run = self.get_last_cached_run(runs)
 
-        last_run_time = datetime.datetime.fromisoformat(last_run["completion_time"])
+        lrt = last_run.get("completion_time", datetime.datetime.now().isoformat())
+        last_run_time = datetime.datetime.fromisoformat(lrt)
 
-        log.debug(
-            f"Comparing: {last_run['completion_time']}, {last_cached_run.get('completion_time')}"
-        )
+        log.debug(f"Comparing: {lrt}, {last_cached_run.get('completion_time')}")
 
         return {
             "name": self.cfg["name"],
@@ -185,6 +184,5 @@ class FlowsCache:
             "runs_size": self.sizeof(self.runs_list_filename),
             "flows_size": self.sizeof(self.flows_list_filename),
             "run_logs_size": self.sizeof(self.run_logs_filename),
-            "cache_up_to_date": last_run["completion_time"]
-            == last_cached_run.get("completion_time"),
+            "cache_up_to_date": lrt == last_cached_run.get("completion_time"),
         }
