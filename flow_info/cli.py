@@ -3,6 +3,8 @@ import logging
 
 import typer
 import humanize
+import datetime
+import pandas as pd
 from rich.console import Console
 from rich.table import Table
 import plots
@@ -12,6 +14,11 @@ from flow_info import FlowInfo
 log = logging.getLogger(__name__)
 app = typer.Typer(no_args_is_help=True)
 console = Console()
+
+
+def fmt_time(seconds_passed: int) -> str:
+    """Format time in a nice human-readable format."""
+    return humanize.naturaldelta(datetime.timedelta(seconds=seconds_passed))
 
 
 @app.command()
@@ -49,15 +56,46 @@ def update(name: str = "xpcs"):
 @app.command()
 def usage(name: str = "xpcs"):
     fi = FlowInfo(name)
-    fi.load()
-    fi.describe_usage()
+    flow_logs = fi.load()
+
+    table = Table("Name", "Mean", "Median", "Min", "Max")
+    for step in fi.flow_order:
+        c = f"{step}_runtime"
+        table.add_row(
+            c,
+            fmt_time(flow_logs[c].mean()),
+            fmt_time(flow_logs[c].median()),
+            fmt_time(flow_logs[c].min()),
+            fmt_time(flow_logs[c].max()),
+        )
+    table.add_row(
+        "Total",
+        fmt_time(flow_logs["flow_runtime"].mean()),
+        fmt_time(flow_logs["flow_runtime"].median()),
+        fmt_time(flow_logs["flow_runtime"].min()),
+        fmt_time(flow_logs["flow_runtime"].max()),
+    )
+    console.print(table)
 
 
 @app.command()
 def runtimes(name: str = "xpcs"):
     fi = FlowInfo(name)
-    fi.load()
-    fi.describe_runtimes()
+    flow_logs = fi.load()
+
+    table = Table(
+        "Total Transferred",
+        "Mean Transferred",
+        "Total Compute Time",
+        "Mean compute Time",
+    )
+    table.add_row(
+        humanize.naturalsize(flow_logs["total_bytes_transferred"].sum()),
+        humanize.naturalsize(flow_logs["total_bytes_transferred"].mean()),
+        fmt_time(flow_logs["total_funcx_time"].sum()),
+        fmt_time(flow_logs["total_funcx_time"].mean()),
+    )
+    console.print(table)
 
 
 @app.command()

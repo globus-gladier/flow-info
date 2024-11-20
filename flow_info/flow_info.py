@@ -23,6 +23,7 @@ class FlowInfo:
         """
         self.flow_logs, self.action_logs = self._extract_times(self.cache.runs[0:limit])
         log.info(f"Loaded {limit} runs")
+        return self.flow_logs
 
     def _get_step_types(self, flow_id):
         """Get the type associated with each step.
@@ -46,46 +47,6 @@ class FlowInfo:
             if flow_dfn['definition']['States'][x]["Type"] == "Action":
                 steps[x] = flow_dfn['definition']['States'][x]['ActionUrl']
         return steps
-
-    def describe_runtimes(self):
-        """Print out summary stats for each step
-        """
-        if self.flow_logs is None:
-            print("No flows data loaded.")
-            return
-
-        print(f"Flow:\t mean {int(self.flow_logs['flow_runtime'].mean())}s, "\
-              f"min {int(self.flow_logs['flow_runtime'].min())}s, "\
-              f"max {int(self.flow_logs['flow_runtime'].max())}s")
-
-        for step in self.flow_order:
-            c = f"{step}_runtime"
-            # log.debug(self.flow_logs[c].to_string())
-            with pd.option_context('display.max_rows', None, 'display.max_columns', None):  # more options can be specified also
-                print(self.flow_logs[c])
-            print(f"{step}:\t mean {int(self.flow_logs[c].mean())}s, "\
-                  f"median {int(self.flow_logs[c].median())}s, "\
-                #   f"std {int(self.flow_logs[c].std())}s, "\
-                  f"min {int(self.flow_logs[c].min())}s, "\
-                  f"max {int(self.flow_logs[c].max())}s")
-
-
-    def describe_usage(self):
-        """Print out usage stats for each flow
-        """
-        if self.flow_logs is None:
-            print("No flows data loaded.")
-            return
-
-        mean_bytes = int(self.flow_logs['total_bytes_transferred'].mean())
-        mean_gb = mean_bytes / (1024*1024*1024)
-        sum_bytes = int(self.flow_logs['total_bytes_transferred'].sum())
-        sum_gb = sum_bytes / (1024*1024*1024)
-        print(f"Bytes Transferred:\t mean {mean_gb:.3f}GB, "\
-              f"Total {sum_gb:.3f}GB")
-
-        print(f"funcX Time:\t mean {int(self.flow_logs['total_funcx_time'].mean())}s, "\
-              f"Total {int(self.flow_logs['total_funcx_time'].sum())}s")
 
     def _extract_times(self, flow_runs):
         """Extract the timings from the flow logs and create a dataframe
