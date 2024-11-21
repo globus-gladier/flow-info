@@ -64,12 +64,13 @@ def update(name: str = "xpcs"):
 
         fc.update_flows()
         progress.update(flows_task, advance=100.0)
-        for runs_fetched in fc.update_runs():
-            progress.update(
-                runs_task,
-                advance=1,
-                description=f"[green]Downloading Runs...{runs_fetched}",
-            )
+        if fc.summary()["cache_up_to_date"] is False:
+            for runs_fetched in fc.update_runs():
+                progress.update(
+                    runs_task,
+                    advance=1,
+                    description=f"[green]Downloading Runs...{runs_fetched}",
+                )
         progress.update(runs_task, advance=100)
         fc._load_data.cache_clear()
         total_runs = len(fc.runs)
