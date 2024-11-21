@@ -1,5 +1,6 @@
 import os
 import logging
+import logging.config
 
 import typer
 import humanize
@@ -120,15 +121,31 @@ def update_logs(name: str = "xpcs"):
         fc.get_run_logs(run["run_id"])
 
 
-if __name__ == "__main__":
+@app.callback()
+def main(verbose: bool = False):
+    level = logging.DEBUG if verbose else logging.WARNING
     # Log stuff in here
-    logger = logging.getLogger("root")
-    logger.setLevel(logging.DEBUG)
-    ch = logging.StreamHandler()
-    ch.setLevel(logging.DEBUG)
-    logger.addHandler(ch)
-    # SDK Logs are so darn chatty...
-    sdk = logging.getLogger("globus_sdk")
-    sdk.setLevel(logging.WARNING)
+    logging.config.dictConfig(
+        {
+            "version": 1,
+            "formatters": {
+                "basic": {
+                    "format": "[%(levelname)s] " "%(name)s::%(funcName)s() %(message)s"
+                }
+            },
+            "handlers": {
+                "console": {
+                    "class": "logging.StreamHandler",
+                    "level": level,
+                    "formatter": "basic",
+                }
+            },
+            "loggers": {
+                "flow_info": {"level": "DEBUG", "handlers": ["console"]},
+            },
+        }
+    )
 
+
+if __name__ == "__main__":
     app()
