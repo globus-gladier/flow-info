@@ -68,13 +68,17 @@ class FlowsCache:
         if not path.exists():
             return []
         with open(path) as f:
-            return json.loads(f.read())
+            data = f.read()
+            if data:
+                return json.loads(data)
+            return None
 
     def _save_data(self, filename: str, data):
         path = pathlib.Path(self.basepath) / filename
         log.debug(f"Saving: {path}")
         with open(path, "w") as f:
             f.write(json.dumps(data, indent=2))
+        self._load_data.cache_clear()
 
     @property
     def flows(self):
@@ -132,6 +136,7 @@ class FlowsCache:
                 break
             runs_collected += len(run.data["runs"])
             log.debug(f"Fetched {runs_collected} runs...")
+            yield runs_collected
 
         # Save only run data, not other junk returned by flows
         run_data = {"runs": runs}
