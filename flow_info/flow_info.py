@@ -1,5 +1,7 @@
 import logging
+import datetime
 import pandas as pd
+import typing as t
 
 from flows_cache import FlowsCache
 
@@ -11,7 +13,20 @@ class FlowInfo:
     """A class to inspect and describe Globus Flow runs.
     """
 
-    def __init__(self, name="xpcs"):
+    transfer_ap_urls = [
+        # Old Transfer AP -- Remove after Feb 2025
+        "https://actions.automate.globus.org/transfer/transfer/",
+        # New Transfer AP
+        "https://transfer.actions.globus.org/transfer/"
+    ]
+    compute_ap_urls = [
+        "https://compute.actions.globus.org",
+    ]
+
+    def __init__(self, name="xpcs", compute_states: t.List[str] = [], transfer_states: t.List[str] = []):
+        self.compute_states = compute_states
+        self.transfer_states = transfer_states
+
         self.cache = FlowsCache(name)
         self.flow_logs = {}
 
@@ -21,11 +36,11 @@ class FlowInfo:
         Args:
             limit (int, optional): The number of flow actions to load. Defaults 100.
         """
-        self.flow_logs, self.action_logs = self._extract_times(self.cache.runs[0:limit])
-        log.info(f"Loaded {limit} runs")
-        return self.flow_logs
+        runs = self.cache.runs[0:limit] if limit else self.cache.runs
+        log.debug(f"Fetching metadata for {len(runs)} runs...")
+        return self._extract_times(runs)
 
-    def _get_step_types(self, flow_id):
+    def get_step_types(self, flow_id):
         """Get the type associated with each step.
 
         Args:
@@ -48,6 +63,28 @@ class FlowInfo:
                 steps[x] = flow_dfn['definition']['States'][x]['ActionUrl']
         return steps
 
+    def filter_log_entries(self, run_log: dict, filter_state_names: t.List[str], filter_codes: t.List[str] = ["ActionCompleted"]) -> t.List[dict]:
+        """
+        :param run_log: Full dict containing all run log info
+        :param filter_state_names: Names that will match this state.
+        :param filter_code: Status code to filter log entries by. Common ones are ActionStarted, ActionCompleted
+        """
+        return [
+            e for e in run_log['entries'] if
+            e["code"] in filter_codes and
+            (len(filter_state_names) == 0 or e['details']['state_name'] in filter_state_names)
+        ]
+
+    def filter_ap_states(self, flow_id: str, action_provider_urls: t.List[str]) -> t.Set[str]:
+        return {state_name for state_name, url in self.get_step_types(flow_id).items() if url in action_provider_urls}
+
+    def filter_ap_states_transfer(self, flow_id: str):
+        return self.filter_ap_states(flow_id, self.transfer_ap_urls)
+
+    def filter_ap_states_compute(self, flow_id: str):
+        return self.filter_ap_states(flow_id, self.compute_ap_urls)
+
+
     def _extract_times(self, flow_runs):
         """Extract the timings from the flow logs and create a dataframe
 
@@ -61,22 +98,19 @@ class FlowInfo:
             Dict: A dict of step name to bytes transferred
         """
         all_res = pd.DataFrame()
-        action_logs = {}
         for flow_run in flow_runs:
             if flow_run["status"] != "SUCCEEDED":
                 log.debug(f"Skipping run {flow_run['run_id']} due to status: {flow_run['status']}")
                 continue
 
-            step_types = self._get_step_types(flow_run['flow_id'])
+            step_types = self.get_step_types(flow_run['flow_id'])
 
             flow_res = {}
-            flow_res['action_id'] = flow_run['action_id']
             flow_res['start'] = flow_run['start_time']
             flow_res['end'] = flow_run['completion_time']
 
-            log.debug(f"Fetching run action logs for {flow_run['action_id']}")
-            flow_logs = self.cache.get_run_logs(flow_run['action_id'])
-            action_logs[flow_res['action_id']] = flow_logs['entries'][-1]
+            log.debug(f"Fetching run action logs for {flow_run['run_id']}")
+            flow_logs = self.cache.get_run_logs(flow_run['run_id'])
             
             # Get step timing info. this gives a _runtime field for each step
             flow_steps, flow_order = self._extract_step_times(flow_logs)
@@ -84,43 +118,57 @@ class FlowInfo:
             flow_res.update(flow_steps)
             
             # Pull out bytes transferred from any Transfer steps
-            bytes_transferred = self._extract_bytes_transferred(flow_logs)
+            filtered_transfer = self.filter_ap_states_transfer(flow_run["flow_id"])
+            if self.transfer_states:
+                filtered_transfer = filtered_transfer.intersection(set(self.transfer_states))
+                log.debug(f"Filtering on states: {filtered_transfer}")
+            bytes_transferred = self.extract_bytes_transferred(flow_logs, filter_state_names=filtered_transfer, filter_codes=["ActionCompleted"])
             flow_res.update(bytes_transferred)
 
-            # Get the list of funcx task uuids to later track function execution time
-            funcx_task_ids = self._extract_funcx_info(flow_logs, step_types)
-            flow_res['funcx_task_ids'] = funcx_task_ids
+            # Pull out bytes transferred from any Compute steps
+            filtered_compute = self.filter_ap_states_compute(flow_run["flow_id"])
+            if self.compute_states:
+                filtered_compute = filtered_compute.intersection(set(self.compute_states))
+                log.debug(f"Filtering on states: {filtered_compute}")
+            compute_stats = self.extract_compute_time(flow_logs, filter_state_names=filtered_compute)
+            flow_res.update(compute_stats)
 
             flowdf = pd.DataFrame([flow_res])
-            # Convert timing strings
-            convert_columns = list(flowdf.columns)[1:]  # Not inlcude action id
-            for c in convert_columns:
-                if 'start' in c or 'end' in c:
-                    flowdf[c] = (pd.to_datetime(flowdf[c]).dt.tz_localize(None) - pd.Timestamp("1970-01-01")) / pd.Timedelta('1s')
-            
-            # Get a list of all the compute
-            compute_steps = []
-            for step, ap in step_types.items():
-                if ap == "https://compute.actions.globus.org":
-                    compute_steps.append(step)
-            total_compute_time = 0
-
-            # Compute runtime fields and add together compute total time
-            flowdf['flow_runtime'] = flowdf['end'] - flowdf['start']
-            for step in flow_order:
-                flowdf[f'{step}_runtime'] = flowdf[f'{step}_end'] - flowdf[f'{step}_start']
-                if step in compute_steps:
-                    total_compute_time += flowdf[f'{step}_runtime']
-            flowdf['total_funcx_time'] = total_compute_time
-
             all_res = pd.concat([all_res, flowdf], ignore_index=True)
+
+            yield
         if len(all_res) > 0:
             all_res = all_res.sort_values(by=['start'])
             all_res = all_res.reset_index(drop=True)
-        return all_res, action_logs
+        log.debug("Done!")
+        self.flow_stats = all_res
 
 
-    def _extract_bytes_transferred(self, flow_logs):
+    def extract_compute_time(self, flow_logs, filter_state_names: t.List[str] = []):
+        compute_times = {
+            "total_compute_time": 0,
+        }
+        stats = {}
+        if not filter_state_names:
+            return compute_time
+        flogs = self.filter_log_entries(flow_logs, filter_state_names, ["ActionStarted", "ActionCompleted"])
+        log.debug(f"Filtering compute log states based on: {filter_state_names}, Matched entries: {len(flogs)}")
+
+        for lg in flogs:
+            state_name = lg["details"].get("state_name")
+            if lg["code"] == "ActionStarted":
+                stats[state_name] = {"start": lg["time"]}
+            elif lg["code"] == "ActionCompleted":
+                stats[state_name]["end"] = lg["time"]
+                # stats[state_name]["action_id"] = lg["details"]["output"][state_name]["action_id"]
+        compute_times = {
+            f"{name}_compute_time": (datetime.datetime.fromisoformat(vals["end"]) - datetime.datetime.fromisoformat(vals["start"])).total_seconds() for name, vals in stats.items()
+        }
+        compute_times["total_compute_time"] = sum(compute_times.values())
+        return compute_times
+
+
+    def extract_bytes_transferred(self, flow_logs, filter_state_names: t.List[str] = [], filter_codes: str = ["ActionCompleted"]):
         """Extract the bytes moved by Transfer steps
 
         Args:
@@ -129,48 +177,32 @@ class FlowInfo:
         Returns:
             dict: A dict of the bytes moved for each step
         """
-        flow_log = flow_logs['entries'][-1]
-
-        transfer_usage = {}
-        total_bytes_transferred = 0
-        if not flow_log['details'].get('output') or not flow_log['details']['output'].get('details'):
-            log.error("Flow encountered with no bytes transferred!")
-            transfer_usage['total_bytes_transferred'] = total_bytes_transferred
+        transfer_usage = {
+            "total_bytes_transferred": 0,
+            "total_files_transferred": 0,
+            "total_files_skipped": 0
+        }
+        if not filter_state_names:
             return transfer_usage
-        for k, v in flow_log['details']['output'].items():
-            if 'details' in v:
-                if 'bytes_transferred' in v['details']:
-                    transfer_usage[f"{k}_bytes_transferred"] = v['details']['bytes_transferred']
-                    total_bytes_transferred += v['details']['bytes_transferred']
-        
-        transfer_usage['total_bytes_transferred'] = total_bytes_transferred
+        flogs = self.filter_log_entries(flow_logs, filter_state_names, filter_codes)
+        log.debug(f"Filtering log states based on: {filter_state_names}, Matched entries: {len(flogs)}")
+
+        for lg in flogs:
+            action_logs = lg["details"]["output"]
+            state_name = lg["details"].get("state_name")
+            if state_name is None:
+                log.warning(f"No statename found in log entry! (filtering on {filter_state_names})")
+                continue
+
+            transfer_usage[f"{state_name}_bytes_transferred"] = action_logs[state_name]['details']['bytes_transferred']
+            transfer_usage[f"{state_name}_files_transferred"] = action_logs[state_name]['details']['files_transferred']
+            transfer_usage[f"{state_name}_files_skipped"] = action_logs[state_name]['details']['files_skipped']
+
+            transfer_usage["total_bytes_transferred"] += action_logs[state_name]['details']['bytes_transferred']
+            transfer_usage["total_files_transferred"] += action_logs[state_name]['details']['files_transferred']
+            transfer_usage["total_files_skipped"] += action_logs[state_name]['details']['files_skipped']
+
         return transfer_usage
-
-    def _extract_funcx_info(self, flow_logs: dict, step_types: dict):
-        """Extract funcx task information. Work out function uuids and the runtime of all tasks
-
-        Args:
-            flow_logs (dict): A log of the flow's steps
-
-        Returns:
-            dict: A dict of funcx runtimes and a list of tasks
-        """
-
-        fx_steps = []
-        for step, ap in step_types.items():
-            if 'funcx' in ap:
-                fx_steps.append(step)
-
-        fx_ids = []
-        
-        flow_log = flow_logs['entries'][-1]
-
-        for k, v in flow_log['details']['output'].items():
-            if k in fx_steps:
-                fx_ids.append(v['action_id'])
-
-        return fx_ids
-
 
     def _extract_step_times(self, flow_logs):
         """Extract start and stop times from a flow's logs
