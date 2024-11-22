@@ -3,7 +3,7 @@ import datetime
 import pandas as pd
 import typing as t
 
-from flows_cache import FlowsCache
+from flow_info.flows_cache import FlowsCache
 
 
 log = logging.getLogger(__name__)

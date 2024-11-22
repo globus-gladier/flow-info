@@ -12,9 +12,7 @@ from rich.table import Table
 from rich.progress import track
 from rich.table import Column
 from rich.progress import Progress, BarColumn, TextColumn
-import plots
-from flows_cache import FlowsCache
-from flow_info import FlowInfo
+from flow_info import plots, flow_info, flows_cache
 
 log = logging.getLogger(__name__)
 app = typer.Typer(no_args_is_help=True)
@@ -31,7 +29,7 @@ TYPER_OP_LIMIT = typer.Option(default=0, help="Limit the amount of runs to exami
 
 @app.command()
 def summary(name: str = "xpcs"):
-    fc = FlowsCache(name)
+    fc = flows_cache.FlowsCache(name)
     items = ["name", "runs", "flows", "last_run", "run_logs_size", "cache_up_to_date"]
     table = Table(*items)
     summary = fc.summary()
@@ -86,7 +84,7 @@ def update(name: str = "xpcs"):
 
 @app.command()
 def runtimes(name: str = "xpcs", limit: int = TYPER_OP_LIMIT):
-    fi = FlowInfo(name)
+    fi = flow_info.FlowInfo(name)
     flow_logs = fi.load(limit=limit)
 
     table = Table("Name", "Mean", "Median", "Min", "Max")
@@ -115,7 +113,7 @@ def transfer_usage(
     limit: int = TYPER_OP_LIMIT,
     filter_transfer_states: t.List[str] = None,
 ):
-    fi = FlowInfo(name, transfer_states=filter_transfer_states or list())
+    fi = flow_info.FlowInfo(name, transfer_states=filter_transfer_states or list())
     list(track(fi.load(limit=limit)))
     flow_logs = fi.flow_stats
 
@@ -165,7 +163,7 @@ def compute_usage(
     limit: int = TYPER_OP_LIMIT,
     filter_transfer_states: t.List[str] = None,
 ):
-    fi = FlowInfo(name, transfer_states=filter_transfer_states or list())
+    fi = flow_info.FlowInfo(name, transfer_states=filter_transfer_states or list())
     flow_logs = fi.load(limit=limit)
 
     t_states = [
@@ -192,21 +190,21 @@ def compute_usage(
 
 @app.command()
 def histogram(name: str = "xpcs"):
-    fi = FlowInfo(name)
+    fi = flow_info.FlowInfo(name)
     fi.load()
     plots.plot_histogram(fi.flow_logs)
 
 
 @app.command()
 def gantt(name: str = "xpcs"):
-    fi = FlowInfo(name)
+    fi = flow_info.FlowInfo(name)
     fi.load()
     plots.plot_gantt(fi.flow_logs, fi.flow_order)
 
 
 @app.command()
 def update_logs(name: str = "xpcs"):
-    fc = FlowsCache(name)
+    fc = flows_cache.FlowsCache(name)
     for run in fc.runs:
         console.log(f"Updating run logs for run id {run_id}")
         fc.get_run_logs(run["run_id"])
@@ -226,9 +224,9 @@ def main(verbose: bool = False):
             },
             "handlers": {
                 "console": {
-                    "class": "logging.StreamHandler",
+                    "class": "rich.logging.RichHandler",
                     "level": level,
-                    "formatter": "basic",
+                    "console": console,
                 }
             },
             "loggers": {
