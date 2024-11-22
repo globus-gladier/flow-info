@@ -51,8 +51,18 @@ def summary(name: str = "xpcs"):
 
 
 @app.command()
-def update(name: str = "xpcs"):
-    fc = FlowsCache(name)
+def update(name: str = "xpcs", gui: bool = True):
+    fc = flows_cache.FlowsCache(name)
+
+    if gui is False:
+        console.print("Updating Flows")
+        fc.update_flows()
+        if fc.summary()["cache_up_to_date"] is False:
+            console.print("Updating Runs")
+            list(fc.update_runs())
+        console.print("Updating Run Logs")
+        list(fc.update_run_logs())
+        return
 
     with Progress() as progress:
 
@@ -70,16 +80,13 @@ def update(name: str = "xpcs"):
                     description=f"[green]Downloading Runs...{runs_fetched}",
                 )
         progress.update(runs_task, advance=100)
-        fc._load_data.cache_clear()
-        total_runs = len(fc.runs)
-        for idx, run in enumerate(fc.runs):
+        for idx, total in fc.update_run_logs():
             progress.update(
                 run_logs_task,
                 advance=1,
-                total=total_runs,
-                description=f"[cyan]Downloading Run Logs...({idx}/{total_runs})",
+                total=total,
+                description=f"[cyan]Downloading Run Logs...({idx}/{total})",
             )
-            fc.get_run_logs(run["run_id"])
 
 
 @app.command()

@@ -155,6 +155,32 @@ class FlowsCache:
         log.info(f'Fetched {len(flows["flows"])} Flows from service.')
         self._save_data(self.flows_list_filename, flows)
 
+    def _update_single_run_log(
+        self, flows_client: globus_sdk.FlowsClient, run_id: str, run_logs: dict
+    ):
+        run_log = flows_client.get_run_logs(run_id, limit=100).data
+        run_logs["logs"][run_id] = run_log
+
+    def update_run_logs(self):
+        self._load_data.cache_clear()
+        run_logs = self._load_data(self.run_logs_filename) or {"logs": {}}
+        need_to_fetch = [
+            r["run_id"] for r in self.runs if r["run_id"] not in run_logs["logs"]
+        ]
+
+        flows_client = self.get_flows_client()
+        try:
+            for idx, run_id in enumerate(need_to_fetch):
+                self._update_single_run_log(flows_client, run_id, run_logs)
+                log.debug(f"Fetched run {idx}/{len(need_to_fetch)}: {run_id}")
+                yield idx, len(need_to_fetch)
+        except KeyboardInterrupt:
+            log.critical("Received interrupt! Saving data to disk...")
+            self._save_data(self.run_logs_filename, run_logs)
+            raise
+        log.info("Update successful!")
+        self._save_data(self.run_logs_filename, run_logs)
+
     def get_last_cached_run(self, runs):
         if not runs:
             return dict()
