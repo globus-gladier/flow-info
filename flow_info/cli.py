@@ -61,7 +61,7 @@ def update(name: str = "xpcs", gui: bool = True):
             console.print("Updating Runs")
             list(fc.update_runs())
         console.print("Updating Run Logs")
-        list(fc.update_run_logs())
+        fc.update_run_logs(lambda x, n: console.print(f"Updating runs {x}/{n}"))
         return
 
     with Progress() as progress:
@@ -80,13 +80,14 @@ def update(name: str = "xpcs", gui: bool = True):
                     description=f"[green]Downloading Runs...{runs_fetched}",
                 )
         progress.update(runs_task, advance=100)
-        for idx, total in fc.update_run_logs():
-            progress.update(
+        fc.update_run_logs(
+            lambda x, n: progress.update(
                 run_logs_task,
-                advance=1,
-                total=total,
-                description=f"[cyan]Downloading Run Logs...({idx}/{total})",
+                completed=x,
+                total=n,
+                description=f"[cyan]Downloading Run Logs...({x}/{n})",
             )
+        )
 
 
 @app.command()
