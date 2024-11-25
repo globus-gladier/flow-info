@@ -122,8 +122,9 @@ def transfer_usage(
     filter_transfer_states: t.List[str] = None,
 ):
     fi = flow_info.FlowInfo(name, transfer_states=filter_transfer_states or list())
+    # Track progress through iterations of logs
     list(track(fi.load(limit=limit)))
-    flow_logs = fi.flow_stats
+    flow_logs = fi.get_flow_stats()
 
     t_states = [
         k.replace("_bytes_transferred", "")
@@ -172,7 +173,8 @@ def compute_usage(
     filter_transfer_states: t.List[str] = None,
 ):
     fi = flow_info.FlowInfo(name, transfer_states=filter_transfer_states or list())
-    flow_logs = fi.load(limit=limit)
+    list(track(fi.load(limit=limit)))
+    flow_logs = fi.get_flow_stats()
 
     t_states = [
         k.replace("_compute_time", "")

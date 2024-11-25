@@ -102,19 +102,8 @@ class FlowsCache:
 
     def get_run_logs(self, run_id: str):
         run_logs = self._load_data(self.run_logs_filename) or {"logs": {}}
-
         if run_id in run_logs["logs"]:
-            log.debug(f"Run logs cache hit for run id {run_id}")
             return run_logs["logs"][run_id]
-
-        # Fetch and save the log
-        flows_client = self.get_flows_client()
-        log.debug(f"Run logs cache MISS for run id {run_id}")
-        run_log = flows_client.get_run_logs(run_id, limit=100).data
-        run_logs["logs"][run_id] = run_log
-        self._save_data(self.run_logs_filename, run_logs)
-
-        return run_log
 
     def get_flow(self, flow_id: str):
         log.debug(f"Looking up flow {flow_id}")

@@ -26,6 +26,9 @@ class FlowInfo:
     def __init__(self, name="xpcs", compute_states: t.List[str] = [], transfer_states: t.List[str] = []):
         self.compute_states = compute_states
         self.transfer_states = transfer_states
+        self.missing_run_logs = 0
+        self.flow_stats = {}
+
 
         self.cache = FlowsCache(name)
         self.flow_logs = {}
@@ -39,6 +42,14 @@ class FlowInfo:
         runs = self.cache.runs[0:limit] if limit else self.cache.runs
         log.debug(f"Fetching metadata for {len(runs)} runs...")
         return self._extract_times(runs)
+
+    def get_missing_run_logs(self) -> t.Tuple[int, int]:
+        return self.missing_run_logs, len(self.cache.get_run_logs())
+
+    def get_flow_stats(self) -> dict:
+        if self.flow_stats.empty:
+            raise ValueError("Must call FlowStats.load() before stats can be collected.")
+        return self.flow_stats
 
     def get_step_types(self, flow_id):
         """Get the type associated with each step.
@@ -97,6 +108,7 @@ class FlowInfo:
             DataFrame: A dataframe of the flow execution steps
             Dict: A dict of step name to bytes transferred
         """
+        self.missing_run_logs = 0
         all_res = pd.DataFrame()
         for flow_run in flow_runs:
             if flow_run["status"] != "SUCCEEDED":
@@ -111,6 +123,9 @@ class FlowInfo:
 
             log.debug(f"Fetching run action logs for {flow_run['run_id']}")
             flow_logs = self.cache.get_run_logs(flow_run['run_id'])
+            if not flow_logs:
+                self.missing_run_logs += 1
+                continue
             
             # Get step timing info. this gives a _runtime field for each step
             flow_steps, flow_order = self._extract_step_times(flow_logs)
