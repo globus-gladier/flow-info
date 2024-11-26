@@ -91,31 +91,6 @@ def update(name: str = "xpcs", gui: bool = True):
 
 
 @app.command()
-def runtimes(name: str = "xpcs", limit: int = TYPER_OP_LIMIT):
-    fi = flow_info.FlowInfo(name)
-    flow_logs = fi.load(limit=limit)
-
-    table = Table("Name", "Mean", "Median", "Min", "Max")
-    for step in fi.flow_order:
-        c = f"{step}_runtime"
-        table.add_row(
-            c,
-            fmt_time(flow_logs[c].mean()),
-            fmt_time(flow_logs[c].median()),
-            fmt_time(flow_logs[c].min()),
-            fmt_time(flow_logs[c].max()),
-        )
-    table.add_row(
-        "Total",
-        fmt_time(flow_logs["flow_runtime"].mean()),
-        fmt_time(flow_logs["flow_runtime"].median()),
-        fmt_time(flow_logs["flow_runtime"].min()),
-        fmt_time(flow_logs["flow_runtime"].max()),
-    )
-    console.print(table)
-
-
-@app.command()
 def transfer_usage(
     name: str = "xpcs",
     limit: int = TYPER_OP_LIMIT,
@@ -167,24 +142,23 @@ def transfer_usage(
 
 
 @app.command()
-def compute_usage(
+def runtimes(
     name: str = "xpcs",
     limit: int = TYPER_OP_LIMIT,
-    filter_transfer_states: t.List[str] = None,
 ):
-    fi = flow_info.FlowInfo(name, transfer_states=filter_transfer_states or list())
+    fi = flow_info.FlowInfo(name)
     list(track(fi.load(limit=limit)))
     flow_logs = fi.get_flow_stats()
 
     t_states = [
-        k.replace("_compute_time", "")
+        k.replace("_step_time", "")
         for k in flow_logs.keys()
-        if "_compute_time" in k and k != "total_compute_time"
+        if "_step_time" in k and k != "total_step_time"
     ]
 
     table = Table("Name", "Total Compute Time", "Average Compute Time")
     for state in t_states:
-        btime = f"{state}_compute_time"
+        btime = f"{state}_step_time"
         table.add_row(
             state,
             fmt_time(flow_logs[btime].sum()),
@@ -192,9 +166,10 @@ def compute_usage(
         )
     table.add_row(
         "Total",
-        fmt_time(flow_logs["total_compute_time"].sum()),
-        fmt_time(flow_logs["total_compute_time"].mean()),
+        fmt_time(flow_logs["total_step_time"].sum()),
+        fmt_time(flow_logs["total_step_time"].mean()),
     )
+    console.print(f"Collected metadata for {len(flow_logs)} runs.")
     console.print(table)
 
 

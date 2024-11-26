@@ -23,15 +23,10 @@ class FlowInfo:
         "https://compute.actions.globus.org",
     ]
 
-    def __init__(self, name="xpcs", compute_states: t.List[str] = [], transfer_states: t.List[str] = []):
-        self.compute_states = compute_states
-        self.transfer_states = transfer_states
+    def __init__(self, name="xpcs"):
+        self.cache = FlowsCache(name)
         self.missing_run_logs = 0
         self.flow_stats = {}
-
-
-        self.cache = FlowsCache(name)
-        self.flow_logs = {}
 
     def load(self, limit=20):
         """Load a flow's executions
@@ -100,8 +95,6 @@ class FlowInfo:
         """Extract the timings from the flow logs and create a dataframe
 
         Args:
-            flow_id (str): The flow uuid
-            flow_scope (str): The flow scope
             flow_runs (dict): A dict of flow runs
 
         Returns:
@@ -115,42 +108,20 @@ class FlowInfo:
                 log.debug(f"Skipping run {flow_run['run_id']} due to status: {flow_run['status']}")
                 continue
 
-            step_types = self.get_step_types(flow_run['flow_id'])
-
-            flow_res = {}
-            flow_res['start'] = flow_run['start_time']
-            flow_res['end'] = flow_run['completion_time']
-
             log.debug(f"Fetching run action logs for {flow_run['run_id']}")
             flow_logs = self.cache.get_run_logs(flow_run['run_id'])
             if not flow_logs:
                 self.missing_run_logs += 1
                 continue
-            
-            # Get step timing info. this gives a _runtime field for each step
-            flow_steps, flow_order = self._extract_step_times(flow_logs)
-            self.flow_order = flow_order
-            flow_res.update(flow_steps)
-            
-            # Pull out bytes transferred from any Transfer steps
-            filtered_transfer = self.filter_ap_states_transfer(flow_run["flow_id"])
-            if self.transfer_states:
-                filtered_transfer = filtered_transfer.intersection(set(self.transfer_states))
-                log.debug(f"Filtering on states: {filtered_transfer}")
-            bytes_transferred = self.extract_bytes_transferred(flow_logs, filter_state_names=filtered_transfer, filter_codes=["ActionCompleted"])
-            flow_res.update(bytes_transferred)
 
-            # Pull out bytes transferred from any Compute steps
-            filtered_compute = self.filter_ap_states_compute(flow_run["flow_id"])
-            if self.compute_states:
-                filtered_compute = filtered_compute.intersection(set(self.compute_states))
-                log.debug(f"Filtering on states: {filtered_compute}")
-            compute_stats = self.extract_compute_time(flow_logs, filter_state_names=filtered_compute)
-            flow_res.update(compute_stats)
-
+            # Collect info about the flow run
+            flow_res = {"start": flow_run["start_time"]}
+            flow_res.update(self.extract_bytes_transferred(flow_logs, filter_state_names=self.transfer_ap_urls, filter_codes=["ActionCompleted"]))
+            flow_res.update(self.extract_step_times(flow_logs))
             flowdf = pd.DataFrame([flow_res])
             all_res = pd.concat([all_res, flowdf], ignore_index=True)
 
+            # Yield the current progress. The number of iterated runs is significant, so this is nice to track progress
             yield
         if len(all_res) > 0:
             all_res = all_res.sort_values(by=['start'])
@@ -159,28 +130,24 @@ class FlowInfo:
         self.flow_stats = all_res
 
 
-    def extract_compute_time(self, flow_logs, filter_state_names: t.List[str] = []):
-        compute_times = {
-            "total_compute_time": 0,
+    def extract_step_times(self, flow_logs, filter_state_names: t.List[str] = []):
+        step_times = {
+            "total_step_time": 0,
         }
-        stats = {}
-        if not filter_state_names:
-            return compute_time
         flogs = self.filter_log_entries(flow_logs, filter_state_names, ["ActionStarted", "ActionCompleted"])
         log.debug(f"Filtering compute log states based on: {filter_state_names}, Matched entries: {len(flogs)}")
-
+        stats = {}
         for lg in flogs:
             state_name = lg["details"].get("state_name")
             if lg["code"] == "ActionStarted":
                 stats[state_name] = {"start": lg["time"]}
             elif lg["code"] == "ActionCompleted":
                 stats[state_name]["end"] = lg["time"]
-                # stats[state_name]["action_id"] = lg["details"]["output"][state_name]["action_id"]
-        compute_times = {
-            f"{name}_compute_time": (datetime.datetime.fromisoformat(vals["end"]) - datetime.datetime.fromisoformat(vals["start"])).total_seconds() for name, vals in stats.items()
+        step_times = {
+            f"{name}_step_time": (datetime.datetime.fromisoformat(vals["end"]) - datetime.datetime.fromisoformat(vals["start"])).total_seconds() for name, vals in stats.items()
         }
-        compute_times["total_compute_time"] = sum(compute_times.values())
-        return compute_times
+        step_times["total_step_time"] = sum(step_times.values())
+        return step_times
 
 
     def extract_bytes_transferred(self, flow_logs, filter_state_names: t.List[str] = [], filter_codes: str = ["ActionCompleted"]):
@@ -218,33 +185,6 @@ class FlowInfo:
             transfer_usage["total_files_skipped"] += action_logs[state_name]['details']['files_skipped']
 
         return transfer_usage
-
-    def _extract_step_times(self, flow_logs):
-        """Extract start and stop times from a flow's logs
-
-        Args:
-            flow_logs (dict): A log of the flow's steps
-
-        Returns:
-            dict: A dict of the start and end times of each step
-        """
-        
-        mylogs = flow_logs['entries']
-        steps = []
-        res = {}
-
-        for x in range(len(mylogs)):            
-            if 'Action' not in mylogs[x]['code']:
-                continue
-            if 'ActionStarted' in mylogs[x]['code']:
-                name = mylogs[x]['details']['state_name']
-                res[f'{name}_start'] = mylogs[x]['time']
-                steps.append(name)
-            if 'ActionCompleted' in mylogs[x]['code']:
-                name = mylogs[x]['details']['state_name']
-                res[f'{name}_end'] = mylogs[x]['time']
-        
-        return res, steps
 
 
 if __name__ == "__main__":
