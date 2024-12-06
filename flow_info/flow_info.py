@@ -28,7 +28,7 @@ class FlowInfo:
         self.missing_run_logs = 0
         self.flow_stats = {}
 
-    def load(self, limit=20):
+    def load(self, limit=20, step_times_compute_only=False):
         """Load a flow's executions
 
         Args:
@@ -36,7 +36,7 @@ class FlowInfo:
         """
         runs = self.cache.runs[0:limit] if limit else self.cache.runs
         log.debug(f"Fetching metadata for {len(runs)} runs...")
-        return self._extract_times(runs)
+        return self._extract_times(runs, step_times_compute_only)
 
     def get_missing_run_logs(self) -> t.Tuple[int, int]:
         return self.missing_run_logs, len(self.cache.get_run_logs())
@@ -91,7 +91,7 @@ class FlowInfo:
         return self.filter_ap_states(flow_id, self.compute_ap_urls)
 
 
-    def _extract_times(self, flow_runs):
+    def _extract_times(self, flow_runs, step_times_compute_only: bool = False):
         """Extract the timings from the flow logs and create a dataframe
 
         Args:
@@ -116,8 +116,13 @@ class FlowInfo:
 
             # Collect info about the flow run
             flow_res = {"start": flow_run["start_time"]}
-            flow_res.update(self.extract_bytes_transferred(flow_logs, filter_state_names=self.transfer_ap_urls, filter_codes=["ActionCompleted"]))
-            flow_res.update(self.extract_step_times(flow_logs))
+            flow_res.update(self.extract_bytes_transferred(flow_run["flow_id"], flow_logs))
+
+            # Filter state names by compute if required
+            filter_names = self.filter_ap_states_compute(flow_run["flow_id"]) if step_times_compute_only else []
+            flow_res.update(self.extract_step_times(flow_logs, filter_state_names=filter_names))
+
+            # Combine dataframes
             flowdf = pd.DataFrame([flow_res])
             all_res = pd.concat([all_res, flowdf], ignore_index=True)
 
@@ -150,7 +155,7 @@ class FlowInfo:
         return step_times
 
 
-    def extract_bytes_transferred(self, flow_logs, filter_state_names: t.List[str] = [], filter_codes: str = ["ActionCompleted"]):
+    def extract_bytes_transferred(self, flow_id: str, flow_logs: dict):
         """Extract the bytes moved by Transfer steps
 
         Args:
@@ -164,9 +169,8 @@ class FlowInfo:
             "total_files_transferred": 0,
             "total_files_skipped": 0
         }
-        if not filter_state_names:
-            return transfer_usage
-        flogs = self.filter_log_entries(flow_logs, filter_state_names, filter_codes)
+        filter_state_names = self.filter_ap_states_transfer(flow_id)
+        flogs = self.filter_log_entries(flow_logs, filter_state_names, ["ActionCompleted"])
         log.debug(f"Filtering log states based on: {filter_state_names}, Matched entries: {len(flogs)}")
 
         for lg in flogs:

@@ -96,7 +96,7 @@ def transfer_usage(
     limit: int = TYPER_OP_LIMIT,
     filter_transfer_states: t.List[str] = None,
 ):
-    fi = flow_info.FlowInfo(name, transfer_states=filter_transfer_states or list())
+    fi = flow_info.FlowInfo(name)
     # Track progress through iterations of logs
     list(track(fi.load(limit=limit)))
     flow_logs = fi.get_flow_stats()
@@ -145,9 +145,13 @@ def transfer_usage(
 def runtimes(
     name: str = "xpcs",
     limit: int = TYPER_OP_LIMIT,
+    compute_only: bool = False,
 ):
+    """
+    todo: Collect number of runs present in each step
+    """
     fi = flow_info.FlowInfo(name)
-    list(track(fi.load(limit=limit)))
+    list(track(fi.load(limit=limit, step_times_compute_only=compute_only)))
     flow_logs = fi.get_flow_stats()
 
     t_states = [
