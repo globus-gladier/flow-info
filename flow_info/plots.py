@@ -13,13 +13,13 @@ def plot_histogram(flow_logs, include=None):
     cols = []
     labels = []
     for c in flow_logs.keys():
-        if "_runtime" in c:
-            if not include or c.replace("_runtime", "") in include:
+        if "_step_time" in c:
+            if not include or c.replace("_step_time", "") in include:
                 cols.append(c)
-                if c == "flow_runtime":
+                if c == "total_step_time":
                     labels.append("Total runtime")
                 else:
-                    labels.append(c.replace("_runtime", ""))
+                    labels.append(c.replace("_step_time", ""))
 
     df = flow_logs[cols]
 

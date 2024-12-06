@@ -174,17 +174,20 @@ def runtimes(
 
 
 @app.command()
-def histogram(name: str = "xpcs"):
+def histogram(
+    name: str = "xpcs",
+    limit: int = TYPER_OP_LIMIT,
+):
     fi = flow_info.FlowInfo(name)
-    fi.load()
-    plots.plot_histogram(fi.flow_logs)
+    list(track(fi.load(limit=limit)))
+    plots.plot_histogram(fi.get_flow_stats())
 
 
 @app.command()
 def gantt(name: str = "xpcs"):
     fi = flow_info.FlowInfo(name)
-    fi.load()
-    plots.plot_gantt(fi.flow_logs, fi.flow_order)
+    list(track(fi.load(limit=limit)))
+    plots.plot_gantt(flow_logs, fi.get_flow_stats())
 
 
 @app.command()
