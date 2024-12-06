@@ -195,6 +195,12 @@ def gantt(name: str = "xpcs"):
 
 
 @app.command()
+def plot_over_time(name: str = "xpcs"):
+    fi = flow_info.FlowInfo(name)
+    plots.plot_over_time(fi.extract_dates())
+
+
+@app.command()
 def update_logs(name: str = "xpcs"):
     fc = flows_cache.FlowsCache(name)
     for run in fc.runs:

@@ -191,6 +191,28 @@ class FlowInfo:
         return transfer_usage
 
 
+    def extract_dates(self):
+
+        dates = pd.DataFrame()
+        for flow_run in self.cache.runs:
+            dt = datetime.datetime.fromisoformat(flow_run["start_time"])
+            round_hour = dt.hour // 30
+            run_info = pd.DataFrame([{
+                "start_date": dt.date().isoformat(),
+                "start_hour": dt.replace(second=0, microsecond=0, minute=0, hour=dt.hour + round_hour)
+            }])
+            dates = pd.concat([dates, run_info], ignore_index=True)
+
+        # Value counts for start date
+        value_counts = dates["start_date"].value_counts()
+        dates = dates.assign(runs_per_day=[value_counts[sd] for sd in dates["start_date"]])
+
+        # Value counts for start hour
+        hour_counts = dates["start_hour"].value_counts()
+        dates = dates.assign(runs_per_hour=[value_counts[sd.date().isoformat()] for sd in dates["start_hour"]])
+        return dates
+
+
 if __name__ == "__main__":
     fi = FlowInfo()
     fi.load(limit=10)

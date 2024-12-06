@@ -2,6 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 import pandas as pd
+import plotly.express as px
 
 
 def plot_histogram(flow_logs, include=None):
@@ -95,3 +96,28 @@ def plot_gantt(
     gnt.set_xlabel("Time (s)", fontsize=25, color="black")
     gnt.tick_params(axis="both", which="major", pad=5, labelsize=25, labelcolor="black")
     plt.savefig("gantt.png", bbox_inches="tight", pad_inches="layout")
+
+
+def plot_over_time(df: pd.DataFrame):
+    fig = px.line(
+        df,
+        x="start_hour",
+        y="runs_per_hour",
+        title="Time Series with Range Slider and Selectors",
+    )
+
+    fig.update_xaxes(
+        rangeslider_visible=True,
+        rangeselector=dict(
+            buttons=list(
+                [
+                    dict(count=1, label="1m", step="month", stepmode="backward"),
+                    dict(count=6, label="6m", step="month", stepmode="backward"),
+                    dict(count=1, label="YTD", step="year", stepmode="todate"),
+                    dict(count=1, label="1y", step="year", stepmode="backward"),
+                    dict(step="all"),
+                ]
+            )
+        ),
+    )
+    fig.show()
