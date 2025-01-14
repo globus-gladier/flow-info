@@ -1,3 +1,3 @@
-from flow_info.flow_info import FlowInfo
+import logging
 
-__all__ = [FlowInfo]
+logging.getLogger("flow_info").addHandler(logging.NullHandler())

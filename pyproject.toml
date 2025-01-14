@@ -1,0 +1,5 @@
+[project]
+name = "flow-info"
+dynamic = ["version"]
+[project.scripts]
+flow-info = "flow_info.cli:app"

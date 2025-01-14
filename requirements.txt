@@ -1,6 +1,7 @@
-globus_automate_client
+globus-sdk
 numpy
 pandas
 matplotlib
 seaborn
-
+humanize
+typer
