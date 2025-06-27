@@ -32,6 +32,8 @@ dependencies = [
     "humanize",
     "typer",
     "rich",
+    "plotly",
+    "configobj",
 ]
 
 [project.urls]
