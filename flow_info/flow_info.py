@@ -211,11 +211,3 @@ class FlowInfo:
         hour_counts = dates["start_hour"].value_counts()
         dates = dates.assign(runs_per_hour=[value_counts[sd.date().isoformat()] for sd in dates["start_hour"]])
         return dates
-
-if __name__ == "__main__":
-    fi = FlowInfo()
-    fi.load(limit=10)
-
-    fi.describe_runtimes()
-
-    fi.describe_usage()
