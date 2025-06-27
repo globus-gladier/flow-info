@@ -199,7 +199,7 @@ def gantt(name: str = "xpcs", limit: int = TYPER_OP_LIMIT):
     fi = flow_info.FlowInfo(name)
     list(track(fi.load(limit=limit)))
     flow_logs = fi.get_flow_stats()
-    plots.plot_gantt(flow_logs, ["step1", "step2"])  # You may need to adjust this based on your actual flow structure
+    plots.plot_gantt(flow_logs, step_names=[])  # You may need to adjust this based on your actual flow structure
 
 
 @plot_app.command(name="over-time")

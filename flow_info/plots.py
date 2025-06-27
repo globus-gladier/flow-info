@@ -36,7 +36,7 @@ def plot_histogram(flow_logs, include=None):
 
 
 def plot_gantt(
-    flow_logs, flow_order, limit=None, show_relative_time=True, include=None
+    flow_logs, step_names=[], limit=None, show_relative_time=True, include=None
 ):
     """Plot a Gantt Chart of flow runs.
 
@@ -74,7 +74,7 @@ def plot_gantt(
 
     for i, task in tasks.iterrows():
         # flow_start = task['start']
-        for j, step in enumerate(flow_order):
+        for j, step in enumerate(step_names):
             step_start, step_end = (
                 task[f"{step}_start"],
                 task[f"{step}_end"] - task[f"{step}_start"],
@@ -89,7 +89,7 @@ def plot_gantt(
             )
         flow_end = task["end"] - task[f"{step}_end"]
     gnt.legend(
-        flow_order,
+        step_names,
         #'Flow finishing'],
         fontsize=25,
         loc="upper left",
@@ -101,26 +101,17 @@ def plot_gantt(
 
 
 def plot_over_time(df: pd.DataFrame):
-    fig = px.line(
-        df,
-        x="start_hour",
-        y="runs_per_hour",
-        title="Time Series with Range Slider and Selectors",
-    )
-
-    fig.update_xaxes(
-        rangeslider_visible=True,
-        rangeselector=dict(
-            buttons=list(
-                [
-                    dict(count=1, label="1m", step="month", stepmode="backward"),
-                    dict(count=6, label="6m", step="month", stepmode="backward"),
-                    dict(count=1, label="YTD", step="year", stepmode="todate"),
-                    dict(count=1, label="1y", step="year", stepmode="backward"),
-                    dict(step="all"),
-                ]
-            )
-        ),
-    )
-    plt.savefig('plot-over-time.png')
-    # fig.show()
+    print(df.describe())
+    plt.figure(figsize=(12, 8))
+    plt.scatter(df["start_hour"], df["runs_per_hour"], alpha=0.6, s=50)
+    
+    plt.title("Flow Runs Over Time", fontsize=18, color="black")
+    plt.xlabel("Start Hour", fontsize=16, color="black")
+    plt.ylabel("Runs per Hour", fontsize=16, color="black")
+    plt.tick_params(axis="both", which="major", labelsize=14, labelcolor="black")
+    plt.xticks(rotation=45)
+    plt.grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    plt.savefig("plot-over-time.png", bbox_inches="tight", pad_inches=0.1)
+    plt.close()
