@@ -180,24 +180,29 @@ def runtimes(
     console.print(table)
 
 
-@app.command()
+plot_app = typer.Typer(help="Generate various plots and visualizations", no_args_is_help=True)
+app.add_typer(plot_app, name="plot")
+
+
+@plot_app.command()
 def histogram(
     name: str = "xpcs",
     limit: int = TYPER_OP_LIMIT,
 ):
     fi = flow_info.FlowInfo(name)
-    list(track(fi.load()))
+    list(track(fi.load(limit=limit)))
     plots.plot_histogram(fi.get_flow_stats())
 
 
-@app.command()
-def gantt(name: str = "xpcs"):
+@plot_app.command()
+def gantt(name: str = "xpcs", limit: int = TYPER_OP_LIMIT):
     fi = flow_info.FlowInfo(name)
-    list(track(fi.load()))
-    plots.plot_gantt(flow_logs, fi.get_flow_stats())
+    list(track(fi.load(limit=limit)))
+    flow_logs = fi.get_flow_stats()
+    plots.plot_gantt(flow_logs, ["step1", "step2"])  # You may need to adjust this based on your actual flow structure
 
 
-@app.command()
+@plot_app.command(name="over-time")
 def plot_over_time(name: str = "xpcs"):
     fi = flow_info.FlowInfo(name)
     plots.plot_over_time(fi.extract_dates())
