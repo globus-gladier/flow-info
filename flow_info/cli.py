@@ -186,14 +186,14 @@ def histogram(
     limit: int = TYPER_OP_LIMIT,
 ):
     fi = flow_info.FlowInfo(name)
-    list(track(fi.load(limit=limit)))
+    list(track(fi.load()))
     plots.plot_histogram(fi.get_flow_stats())
 
 
 @app.command()
 def gantt(name: str = "xpcs"):
     fi = flow_info.FlowInfo(name)
-    list(track(fi.load(limit=limit)))
+    list(track(fi.load()))
     plots.plot_gantt(flow_logs, fi.get_flow_stats())
 
 
@@ -207,7 +207,7 @@ def plot_over_time(name: str = "xpcs"):
 def update_logs(name: str = "xpcs"):
     fc = flows_cache.FlowsCache(name)
     for run in fc.runs:
-        console.log(f"Updating run logs for run id {run_id}")
+        console.log(f"Updating run logs for run id {run['run_id']}")
         fc.get_run_logs(run["run_id"])
 
 

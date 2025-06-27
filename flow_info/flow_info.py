@@ -177,9 +177,10 @@ class FlowInfo:
             action_logs = lg["details"]["output"]
             state_name = lg["details"].get("state_name")
             if state_name is None:
-                log.warning(f"No statename found in log entry! (filtering on {filter_state_names})")
+                log.warning(f"No statename found in log entry! (filtering on {state_name})")
                 continue
-
+            if state_name not in action_logs:
+                continue
             transfer_usage[f"{state_name}_bytes_transferred"] = action_logs[state_name]['details']['bytes_transferred']
             transfer_usage[f"{state_name}_files_transferred"] = action_logs[state_name]['details']['files_transferred']
             transfer_usage[f"{state_name}_files_skipped"] = action_logs[state_name]['details']['files_skipped']
@@ -187,7 +188,6 @@ class FlowInfo:
             transfer_usage["total_bytes_transferred"] += action_logs[state_name]['details']['bytes_transferred']
             transfer_usage["total_files_transferred"] += action_logs[state_name]['details']['files_transferred']
             transfer_usage["total_files_skipped"] += action_logs[state_name]['details']['files_skipped']
-
         return transfer_usage
 
 

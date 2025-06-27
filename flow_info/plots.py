@@ -1,4 +1,6 @@
 import numpy as np
+import matplotlib
+matplotlib.use('TkAgg')
 import matplotlib.pyplot as plt
 import seaborn as sns
 import pandas as pd
@@ -120,4 +122,5 @@ def plot_over_time(df: pd.DataFrame):
             )
         ),
     )
-    fig.show()
+    plt.savefig('plot-over-time.png')
+    # fig.show()
