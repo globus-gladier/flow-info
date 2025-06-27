@@ -11,6 +11,7 @@ import globus_sdk
 
 log = logging.getLogger(__name__)
 
+NATIVE_APP_CLIENT_ID = "f7cc043e-c67c-4e0d-977d-c8f034b58d8f"
 
 class FlowsCache:
 
@@ -51,15 +52,18 @@ class FlowsCache:
 
     def get_flows_client(self):
         key = f"{self.name.upper()}_CLIENT_SECRET"
-        secret = os.getenv(key)
+        secret = os.getenv(key, None)
         if not secret:
-            raise ValueError("Please set {key} to fetch data for client")
-
-        app = globus_sdk.ClientApp(
-            app_name=f"FlowInfo-{self.cfg.get('name', self.name)}",
-            client_id=self.cfg["client_id"],
-            client_secret=secret,
-        )
+            app = globus_sdk.UserApp(
+                app_name=f"FlowInfo-{self.cfg.get('name', self.name)}",
+                client_id=NATIVE_APP_CLIENT_ID,
+            )
+        else: 
+            app = globus_sdk.ClientApp(
+                app_name=f"FlowInfo-{self.cfg.get('name', self.name)}",
+                client_id=self.cfg["client_id"],
+                client_secret=secret,
+            )
         return globus_sdk.FlowsClient(app=app)
 
     @functools.cache
@@ -133,12 +137,11 @@ class FlowsCache:
         log.info(f'Fetched {len(run_data["runs"])} runs from service.')
         self._save_data(self.runs_list_filename, run_data)
 
-    def update_flows(self, limit=0):
+    def update_flows(self):
         flows_client = self.get_flows_client()
-        query_limit = limit if limit > 0 else 1000  # Use reasonable default if no limit
         flows = list(
             flows_client.paginated.list_flows(
-                query_params={"orderby": ("created_at DESC",), "limit": query_limit},
+                query_params={"orderby": ("created_at DESC",)},
             ).items()
         )
 
@@ -218,7 +221,7 @@ class FlowsCache:
     def get_last_cached_run(self, runs):
         if not runs:
             return dict()
-        return sorted(runs, key=lambda x: x["completion_time"], reverse=True)[0]
+        return sorted(runs, key=lambda x: x.get("completion_time", ""), reverse=True)[0]
 
     def get_last_run(self):
         flows_client = self.get_flows_client()

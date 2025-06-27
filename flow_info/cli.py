@@ -52,7 +52,9 @@ def summary(name: str = "xpcs"):
 
 @app.command()
 def update(name: str = "xpcs", gui: bool = True, limit: int = TYPER_OP_LIMIT):
+
     fc = flows_cache.FlowsCache(name)
+    fc.get_flows_client()
 
     if gui is False:
         console.print("Updating Flows")
@@ -70,7 +72,7 @@ def update(name: str = "xpcs", gui: bool = True, limit: int = TYPER_OP_LIMIT):
         runs_task = progress.add_task("[green]Downloading Runs...")
         run_logs_task = progress.add_task("[cyan]Downloading Run Logs...")
 
-        fc.update_flows(limit=limit)
+        fc.update_flows()
         progress.update(flows_task, advance=100.0)
         if fc.summary()["cache_up_to_date"] is False:
             for runs_fetched in fc.update_runs(limit=limit):
