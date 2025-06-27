@@ -1,5 +1,49 @@
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "flow-info"
 dynamic = ["version"]
+description = "A profiling and visualization module for Globus Flows"
+authors = [{name = "Gladier Team"}]
+license = {text = "Apache-2.0"}
+readme = "README.md"
+requires-python = ">=3.6"
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: POSIX",
+    "Operating System :: MacOS :: MacOS X",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3.6",
+    "Programming Language :: Python :: 3.7",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+]
+dependencies = [
+    "globus-sdk",
+    "numpy",
+    "pandas",
+    "matplotlib",
+    "seaborn",
+    "humanize",
+    "typer",
+    "rich",
+]
+
+[project.urls]
+Homepage = "https://github.com/globus-gladier/flow_info"
+Repository = "https://github.com/globus-gladier/flow_info"
+
 [project.scripts]
 flow-info = "flow_info.cli:app"
+
+[tool.setuptools.dynamic]
+version = {attr = "flow_info.version.__version__"}
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["flow_info*"]
