@@ -135,9 +135,10 @@ class FlowsCache:
 
     def update_flows(self, limit=0):
         flows_client = self.get_flows_client()
+        query_limit = limit if limit > 0 else 1000  # Use reasonable default if no limit
         flows = list(
             flows_client.paginated.list_flows(
-                query_params={"orderby": ("created_at DESC",), "limit": 1},
+                query_params={"orderby": ("created_at DESC",), "limit": query_limit},
             ).items()
         )
 
@@ -165,10 +166,11 @@ class FlowsCache:
             queue.task_done()
             log.debug("Success!")
 
-    async def _update_run_logs_loop(self, run_logs: dict, callback=None):
+    async def _update_run_logs_loop(self, run_logs: dict, callback=None, limit=0):
         # Prep the queue
         fetch_queue = asyncio.Queue()
-        for run in self.runs:
+        runs_to_process = self.runs[:limit] if limit > 0 else self.runs
+        for run in runs_to_process:
             if run["run_id"] not in run_logs["logs"]:
                 fetch_queue.put_nowait(run["run_id"])
 
@@ -201,13 +203,13 @@ class FlowsCache:
         await asyncio.gather(*tasks, return_exceptions=True)
         log.debug("Exciting...")
 
-    def update_run_logs(self, callback=None):
+    def update_run_logs(self, callback=None, limit=0):
 
         self._load_data.cache_clear()
         run_logs = self._load_data(self.run_logs_filename) or {"logs": {}}
 
         try:
-            asyncio.run(self._update_run_logs_loop(run_logs, callback))
+            asyncio.run(self._update_run_logs_loop(run_logs, callback, limit))
         except KeyboardInterrupt:
             log.warning("Interrupt Received! Saving and exciting...")
         finally:

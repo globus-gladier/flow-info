@@ -51,17 +51,17 @@ def summary(name: str = "xpcs"):
 
 
 @app.command()
-def update(name: str = "xpcs", gui: bool = True):
+def update(name: str = "xpcs", gui: bool = True, limit: int = TYPER_OP_LIMIT):
     fc = flows_cache.FlowsCache(name)
 
     if gui is False:
         console.print("Updating Flows")
-        fc.update_flows()
+        fc.update_flows(limit=limit)
         if fc.summary()["cache_up_to_date"] is False:
             console.print("Updating Runs")
-            list(fc.update_runs())
+            list(fc.update_runs(limit=limit))
         console.print("Updating Run Logs")
-        fc.update_run_logs(lambda x, n: console.print(f"Updating runs {x}/{n}"))
+        fc.update_run_logs(lambda x, n: console.print(f"Updating runs {x}/{n}"), limit=limit)
         return
 
     with Progress() as progress:
@@ -70,10 +70,10 @@ def update(name: str = "xpcs", gui: bool = True):
         runs_task = progress.add_task("[green]Downloading Runs...")
         run_logs_task = progress.add_task("[cyan]Downloading Run Logs...")
 
-        fc.update_flows()
+        fc.update_flows(limit=limit)
         progress.update(flows_task, advance=100.0)
         if fc.summary()["cache_up_to_date"] is False:
-            for runs_fetched in fc.update_runs():
+            for runs_fetched in fc.update_runs(limit=limit):
                 progress.update(
                     runs_task,
                     advance=1,
@@ -86,7 +86,8 @@ def update(name: str = "xpcs", gui: bool = True):
                 completed=x,
                 total=n,
                 description=f"[cyan]Downloading Run Logs...({x}/{n})",
-            )
+            ),
+            limit=limit
         )
 
 
