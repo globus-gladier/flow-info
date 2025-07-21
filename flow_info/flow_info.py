@@ -1,5 +1,6 @@
 import logging
 import datetime
+import zoneinfo
 import pandas as pd
 import typing as t
 
@@ -23,8 +24,8 @@ class FlowInfo:
         "https://compute.actions.globus.org",
     ]
 
-    def __init__(self, name="xpcs"):
-        self.cache = FlowsCache(name)
+    def __init__(self, cache: FlowsCache = None):
+        self.cache = cache or FlowsCache()
         self.missing_run_logs = 0
         self.flow_stats = {}
 

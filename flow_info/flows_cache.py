@@ -7,6 +7,8 @@ import configobj
 import logging
 import functools
 import globus_sdk
+from flow_info.exc import ConfigException
+#from flow_info.runs_cache import RunsCache
 
 
 log = logging.getLogger(__name__)
@@ -18,18 +20,23 @@ class FlowsCache:
         self.name = name
 
         if self.name is None:
-            raise ValueError("Flows Cache cannot be created with name=None")
+            raise ConfigException("Flows Cache cannot be created with name=None")
 
         self.date = date or datetime.datetime.now()
         self.cfg_filename = (
             cfg or pathlib.Path(__file__).parent.parent / "beamlines.cfg"
         )
-        log.debug(f"Using CFG filename: {self.cfg_filename}")
+        log.info(f"Using CFG filename: {self.cfg_filename}")
         self.config = configobj.ConfigObj(str(self.cfg_filename))
 
-        self.basepath = (
-            self.cfg.get("path") or pathlib.Path(__file__).parent.parent / "data"
-        )
+        if not self.config["beamlines"].get(self.name):
+            err = f'"{self.name}" is not configured in {self.cfg_filename}. Please add the following entry under [ "beamlines" ]\n\n'
+            err = f'{err}[\[ {self.name} ]]\n\tname = "{self.name}"\n\tclient_id = "<client_id>"\n'
+            raise ConfigException(err)
+
+        if not self.cfg.get("path"):
+            self.cfg["path"] = pathlib.Path(__file__).parent.parent / "data"
+        self.basepath = self.cfg["path"]
         self.basepath.mkdir(exist_ok=True)
         log.debug(f"Using data path: {self.basepath}")
 
@@ -53,7 +60,8 @@ class FlowsCache:
         key = f"{self.name.upper()}_CLIENT_SECRET"
         secret = os.getenv(key)
         if not secret:
-            raise ValueError("Please set {key} to fetch data for client")
+            err = f'export {key}="<secret>"'
+            raise ConfigException(f"Please set {key} to fetch data for client")
 
         app = globus_sdk.ClientApp(
             app_name=f"FlowInfo-{self.cfg.get('name', self.name)}",

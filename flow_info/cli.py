@@ -27,10 +27,18 @@ def fmt_time(seconds_passed: int) -> str:
 
 TYPER_OP_LIMIT = typer.Option(default=0, help="Limit the amount of runs to examine.")
 
+def get_flows_cache(name: str = "xpcs", date: str = None) -> flow_info.FlowInfo:
+    """Return a FlowInfo object for the given name."""
+    if date is not None:
+        date = datetime.datetime.strptime(date, "%Y-%m-%d")
+    else:
+        date = datetime.datetime.now()
+    return flows_cache.FlowsCache(name, date)
+
 
 @app.command()
-def summary(name: str = "xpcs"):
-    fc = flows_cache.FlowsCache(name)
+def summary(name: str = "xpcs", date: str = None):
+    fc = get_flows_cache(name, date)
     items = ["name", "runs", "flows", "last_run", "run_logs_size", "cache_up_to_date"]
     table = Table(*items)
     summary = fc.summary()
@@ -52,8 +60,8 @@ def summary(name: str = "xpcs"):
 
 
 @app.command()
-def update(name: str = "xpcs", gui: bool = True):
-    fc = flows_cache.FlowsCache(name)
+def update(name: str = "xpcs", date: str = None, gui: bool = True):
+    fc = get_flows_cache(name, date)
 
     if gui is False:
         console.print("Updating Flows")
@@ -94,10 +102,11 @@ def update(name: str = "xpcs", gui: bool = True):
 @app.command()
 def transfer_usage(
     name: str = "xpcs",
+    date: str = None,
     limit: int = TYPER_OP_LIMIT,
     filter_transfer_states: t.List[str] = None,
 ):
-    fi = flow_info.FlowInfo(name)
+    fi = flow_info.FlowInfo(get_flows_cache(name, date))
     # Track progress through iterations of logs
     list(track(fi.load(limit=limit)))
     flow_logs = fi.get_flow_stats()
@@ -145,13 +154,14 @@ def transfer_usage(
 @app.command()
 def runtimes(
     name: str = "xpcs",
+    date: str = None,
     limit: int = TYPER_OP_LIMIT,
     compute_only: bool = False,
 ):
     """
     todo: Collect number of runs present in each step
     """
-    fi = flow_info.FlowInfo(name)
+    fi = flow_info.FlowInfo(get_flows_cache(name, date))
     list(track(fi.load(limit=limit, step_times_compute_only=compute_only)))
     flow_logs = fi.get_flow_stats()
 
@@ -183,27 +193,27 @@ def histogram(
     name: str = "xpcs",
     limit: int = TYPER_OP_LIMIT,
 ):
-    fi = flow_info.FlowInfo(name)
+    fi = flow_info.FlowInfo(get_flows_cache(name, date))
     list(track(fi.load(limit=limit)))
     plots.plot_histogram(fi.get_flow_stats())
 
 
 @app.command()
 def gantt(name: str = "xpcs"):
-    fi = flow_info.FlowInfo(name)
+    fi = flow_info.FlowInfo(get_flows_cache(name, date))
     list(track(fi.load(limit=limit)))
     plots.plot_gantt(flow_logs, fi.get_flow_stats())
 
 
 @app.command()
 def plot_over_time(name: str = "xpcs"):
-    fi = flow_info.FlowInfo(name)
+    fi = flow_info.FlowInfo(get_flows_cache(name, date))
     plots.plot_over_time(fi.extract_dates())
 
 
 @app.command()
 def update_logs(name: str = "xpcs"):
-    fc = flows_cache.FlowsCache(name)
+    fc = get_flows_cache(name, date)
     for run in fc.runs:
         console.log(f"Updating run logs for run id {run_id}")
         fc.get_run_logs(run["run_id"])
