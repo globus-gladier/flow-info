@@ -12,10 +12,11 @@ from rich.table import Table
 from rich.progress import track
 from rich.table import Column
 from rich.progress import Progress, BarColumn, TextColumn
-from flow_info import plots, flow_info, flows_cache
+from flow_info import plots, flow_info, flows_cache, exc
 
 log = logging.getLogger(__name__)
-app = typer.Typer(no_args_is_help=True)
+app = typer.Typer(no_args_is_help=True, pretty_exceptions_enable=False)
+
 console = Console()
 
 
@@ -209,7 +210,8 @@ def update_logs(name: str = "xpcs"):
 
 
 @app.callback()
-def main(verbose: bool = False):
+def main(ctx: typer.Context, verbose: bool = False):
+
     level = logging.DEBUG if verbose else logging.WARNING
     # Log stuff in here
     logging.config.dictConfig(
@@ -233,6 +235,11 @@ def main(verbose: bool = False):
         }
     )
 
+def main_cli():
+    try:
+        app()
+    except exc.ConfigException as e:
+        console.log(f"Config Error: {str(e)}")
 
 if __name__ == "__main__":
-    app()
+    main_cli()

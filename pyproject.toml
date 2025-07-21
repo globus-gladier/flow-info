@@ -1,5 +1,32 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+
 [project]
 name = "flow-info"
 dynamic = ["version"]
+description = "A project to grab logs from the flows service and graph them"
+dependencies = [
+    "globus-sdk",
+    "numpy",
+    "pandas",
+    "matplotlib",
+    "seaborn",
+    "humanize",
+    "typer",
+
+]
+requires-python = ">=3.11"
+license-files = ["LICENSE"]
+license = "Apache-2.0"
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Programming Language :: Python"
+]
+
+[tool.setuptools.packages.find]
+include = ["flow_info"]
+
 [project.scripts]
-flow-info = "flow_info.cli:app"
+flow-info = "flow_info.cli:main_cli"

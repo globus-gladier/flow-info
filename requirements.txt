@@ -1,7 +1,0 @@
-globus-sdk
-numpy
-pandas
-matplotlib
-seaborn
-humanize
-typer
