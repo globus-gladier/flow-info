@@ -66,9 +66,9 @@ def update(name: str = "xpcs", date: str = None, gui: bool = True):
     if gui is False:
         console.print("Updating Flows")
         fc.update_flows()
-        if fc.summary()["cache_up_to_date"] is False:
-            console.print("Updating Runs")
-            list(fc.update_runs())
+        console.print("Updating Runs...")
+        for current, total in fc.update_runs():
+            console.print(f"Fetching: ({current}/{total})")
         console.print("Updating Run Logs")
         fc.update_run_logs(lambda x, n: console.print(f"Updating runs {x}/{n}"))
         return
@@ -77,26 +77,29 @@ def update(name: str = "xpcs", date: str = None, gui: bool = True):
 
         flows_task = progress.add_task("[red]Downloading Flows...")
         runs_task = progress.add_task("[green]Downloading Runs...")
+        run_logs_cache = progress.add_task("[yellow]Updating Run Log Cache...")
         run_logs_task = progress.add_task("[cyan]Downloading Run Logs...")
 
         fc.update_flows()
         progress.update(flows_task, advance=100.0)
-        if fc.summary()["cache_up_to_date"] is False:
-            for runs_fetched in fc.update_runs():
-                progress.update(
-                    runs_task,
-                    advance=1,
-                    description=f"[green]Downloading Runs...{runs_fetched}",
-                )
+        for completed, total in fc.update_runs():
+            progress.update(
+                runs_task,
+                completed=completed,
+                total=total,
+                description=f"[green]Downloading Runs...({completed}/{total})",
+            )
         progress.update(runs_task, advance=100)
-        fc.update_run_logs(
+
+        for cache, total_caches in fc.update_run_logs(
             lambda x, n: progress.update(
                 run_logs_task,
                 completed=x,
                 total=n,
                 description=f"[cyan]Downloading Run Logs...({x}/{n})",
             )
-        )
+        ):
+            progress.update(run_logs_cache, advance=1, total=total_caches, description=f"[cyan]Downloading Cache...({cache})")
 
 
 @app.command()
