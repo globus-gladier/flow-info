@@ -12,30 +12,19 @@ log = logging.getLogger(__name__)
 
 
 class RunLogsCache:
-    def __init__(self, app: globus_sdk.GlobusApp, config, name, workers=10):
+
+    BUCKET_SIZE = 2500
+
+    def __init__(self, app: globus_sdk.GlobusApp, config, name, workers=3):
         self.app = app
         self.data_manager = DataManager(config, name)
         self.workers = workers
 
-    def get_run_logs(self, run_id: str):
-        run_logs = self._load_data(self.run_logs_filename) or {"logs": {}}
-        if run_id in run_logs["logs"]:
-            return run_logs["logs"][run_id]
+    def get_run_logs(self, year_month: str):
+        return self.data_manager.load_run_logs(year_month) or {"logs": {}}
 
     def update_run_logs(self, runs, year_month, callback=None):
-
-        run_logs = self.data_manager.load_run_logs(year_month) or {"logs": {}}
-        log.debug(f"Loaded {len(run_logs['logs'])} run logs for {year_month}")
-        exc = None
-        try:
-            asyncio.run(self._update_run_logs_loop(runs, run_logs, callback))
-        except KeyboardInterrupt as e:
-            log.warning("Interrupt Received! Saving and exciting...")
-            exc = e
-        finally:
-            self.data_manager.save_run_logs(year_month, run_logs)
-            if exc:
-                raise KeyboardInterrupt()
+        asyncio.run(self._update_run_logs(runs, year_month, callback))
 
     async def _update_single_run_log(
         self,
@@ -60,10 +49,38 @@ class RunLogsCache:
             except Exception as e:
                 log.exception(e)
 
-    async def is_expired(self, run):
+    def is_expired(self, run):
         start_time = datetime.datetime.fromisoformat(run["start_time"])
         expired = datetime.timedelta(days=90)
         return bool(datetime.datetime.now(ZoneInfo("UTC")) - start_time >= expired)
+
+    def partition_buckets(self, runs):
+        runs = sorted(runs, key=lambda x: x["start_time"])
+        return enumerate(
+            [
+                runs[i : i + self.BUCKET_SIZE]
+                for i in range(0, len(runs), self.BUCKET_SIZE)
+            ]
+        )
+
+    async def _update_run_logs(self, runs, year_month, callback):
+        for bucket_num, bucket in self.partition_buckets(runs):
+            run_logs = self.data_manager.load_run_logs(year_month, bucket_num) or {
+                "logs": {}
+            }
+            log.debug(
+                f"Loaded {len(run_logs['logs'])} run logs for {year_month} bucket {bucket_num} runs {len(bucket)}"
+            )
+            exc = None
+            try:
+                await self._update_run_logs_loop(bucket, run_logs, callback)
+            except KeyboardInterrupt as e:
+                log.warning("Interrupt Received! Saving and exciting...")
+                exc = e
+            finally:
+                self.data_manager.save_run_logs(year_month, run_logs, bucket_num)
+                if exc:
+                    raise KeyboardInterrupt()
 
     async def _update_run_logs_loop(self, runs: list, run_logs: dict, callback=None):
         # Prep the queue
@@ -71,7 +88,7 @@ class RunLogsCache:
         rejected = []
         accounted = []
         for run in runs:
-            if await self.is_expired(run):
+            if self.is_expired(run):
                 rejected.append(run)
             elif run["run_id"] in run_logs.get("logs", {}):
                 accounted.append(run)
@@ -106,4 +123,3 @@ class RunLogsCache:
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
-        log.debug("Exciting...")

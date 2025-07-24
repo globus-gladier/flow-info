@@ -133,18 +133,16 @@ class RunsCache:
     def get_incomplete_buckets(self):
         incomplete_buckets = []
         for bucket in self.get_buckets_by_date():
-            saved_runs = self.load_runs(bucket["value"])
-            log.info(
-                f"{self.get_filename(bucket['value'])}: {len(saved_runs['runs'])}/{bucket['count']}."
-            )
+            saved_runs = self.data_manager.load_runs(bucket["value"])
+            log.info(f"{bucket['value']}: {len(saved_runs['runs'])}/{bucket['count']}.")
             if len(saved_runs["runs"]) < bucket["count"]:
                 if bucket["count"] > MAX_SEARCH_LIMIT:
-                    log.warning(
+                    log.debug(
                         f"LARGE BUCKET DETECTED ({bucket['count']} for {bucket['value']}), FETCHING..."
                     )
                     for bucket_by_day in self.get_buckets_by_date(bucket["value"]):
                         if bucket_by_day["count"] > MAX_SEARCH_LIMIT:
-                            log.warning(
+                            log.debug(
                                 f"ANOTHER LARGE BUCKET DETECTED ({bucket_by_day['count']} for {bucket_by_day['value']}), FETCHING..."
                             )
                             for bucket_by_hour in self.get_buckets_by_date(
@@ -205,7 +203,7 @@ class RunsCache:
                 log.info(
                     f"Checkpoint Reached! Saving {len(run_data['runs'])} for {current_run_batch}..."
                 )
-                self.save_data(current_run_batch, run_data)
+                self.data_manager.save_runs(current_run_batch, run_data)
                 run_data = {"runs": []}
                 current_run_batch = year_month_batch_key
 
@@ -221,5 +219,5 @@ class RunsCache:
         if current_run_batch is None:
             log.debug("No runs to fetch, all done!")
         else:
-            self.save_data(current_run_batch, run_data)
+            self.data_manager.save_runs(current_run_batch, run_data)
             log.info(f"Completed {current}/{total}. All info saved.")
