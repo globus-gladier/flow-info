@@ -51,8 +51,8 @@ class FlowsCache:
     def get_runs(self, year_month: str):
         return self.runs_cache.get_runs(year_month)
 
-    def get_run_logs(self, year_month: str):
-        return self.run_logs_cache.get_run_logs(year_month)
+    def get_run_logs(self, year_month: str, runs: list):
+        yield from self.run_logs_cache.get_run_logs(year_month, runs)
 
     def get_flow(self, flow_id: str):
         log.debug(f"Looking up flow {flow_id}")
@@ -77,25 +77,47 @@ class FlowsCache:
         self.data_manager.save_flows(f"{now.year}-{now.month}", flows)
 
     def update_run_logs(self, callback):
-        caches = self.get_available_caches()
-        for cache in caches:
+        # Only update the last four months, the maximum duration we could see logs before they
+        # are deleted.
+        caches = sorted(self.get_available_caches())[-4:]
+        for cache_idx, cache in enumerate(caches):
             log.debug(f"Fetching {cache} runs...")
             runs = self.runs_cache.get_runs([cache])
-            yield cache, len(caches)
-            self.run_logs_cache.update_run_logs(runs, cache, callback)
+            for batch, num_batches in self.run_logs_cache.update_run_logs(runs, cache, callback):
+                cache_progress = (cache_idx + 1) / len(caches) * 100
+                batch_progress = (batch + 1) / num_batches * 100 / len(caches)
+                progress = cache_progress + batch_progress
+                total = 100
+                yield cache, len(caches), batch, num_batches, progress, total
+
+
+    def refresh_cache_info(self):
+        for year_month in self.get_available_caches():
+            runs = list(self.get_runs([year_month]))
+            self.data_manager.cache_info[self.name][year_month]["runs"] = len(runs)
+            for bucket_num, _ in self.run_logs_cache.partition_buckets(runs):
+                logs = self.data_manager.load_run_logs(year_month, bucket_num)["logs"]
+                self.data_manager.cache_info[self.name][year_month]["logs"][str(bucket_num)] = len(logs)
+            self.data_manager.save_cache_info()
+
 
     def summary(self, year_months: list = None) -> list:
 
         year_months = year_months or self.get_available_caches()
         summaries = []
+
         for year_month in year_months:
+            runs = self.data_manager.cache_info[self.name][year_month]["runs"]
+            logs = sum(self.data_manager.cache_info[self.name][year_month]["logs"].values())
+            missing = runs - logs
             summaries.append(
                 {
                     "name": self.name,
                     "year_month": year_month,
                     "flows": len(self.get_flows(year_month)),
-                    "runs": len(list(self.get_runs([year_month]))),
-                    "run_logs": len(list(self.get_run_logs(year_month)["logs"])),
+                    "runs": runs,
+                    "run_logs": logs,
+                    "missing_logs": missing,
                     "runs_file_size": self.data_manager.get_runs_file_size(year_month),
                     "run_logs_file_size": self.data_manager.get_run_logs_file_size(
                         year_month

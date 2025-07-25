@@ -63,12 +63,14 @@ def get_config(name: str = "xpcs"):
 
 
 @app.command()
-def summary(name: str = "xpcs", date: str = None):
-    items = ["name", "date", "flows", "runs", "run_logs"]
+def summary(name: str = "xpcs", date: str = None, refresh_cache_info: bool=False):
+    items = ["name", "date", "flows", "runs", "run_logs", "missing_logs"]
     table = Table(*items)
     config = get_config()
 
     fc = get_flows_cache(name, config)
+    if refresh_cache_info:
+        fc.refresh_cache_info()
     for month in fc.summary():
         table.add_row(
             month["name"],
@@ -76,6 +78,7 @@ def summary(name: str = "xpcs", date: str = None):
             str(month["flows"]),
             f"{month['runs']} ({humanize.naturalsize(month['runs_file_size'])})",
             f"{month['run_logs']} ({humanize.naturalsize(month['run_logs_file_size'])})",
+            f"{month['missing_logs']}",
         )
     console.print(table)
 
@@ -91,18 +94,16 @@ def update(name: str = "xpcs", date: str = None, gui: bool = True):
         for current, total in fc.update_runs():
             console.print(f"Fetching: ({current}/{total})")
         console.print("Updating Run Logs")
-        for idx, cache_info in enumerate(
-            fc.update_run_logs(lambda x, n: console.print(f"Updating runs {x}/{n}"))
+        for cache, total_caches, batch, total_batches, log_cache_progress, total in fc.update_run_logs(lambda x, n: console.print(f"Updating runs {x}/{n}")
         ):
-            cache, total_caches = cache_info
-            console.print(f"Updating Cache {cache} ({idx}/{total_caches})")
+            console.print(f"Updating Cache {cache}, Batch ({batch}/{total_batches}) Total Progress {log_cache_progress:.2f}%")
         return
 
     with Progress() as progress:
 
         flows_task = progress.add_task("[red]Downloading Flows...")
         runs_task = progress.add_task("[green]Downloading Runs...")
-        run_logs_cache = progress.add_task("[yellow]Updating Run Log Cache...")
+        run_logs_cache = progress.add_task("[yellow]Updating Cache...")
         run_logs_task = progress.add_task("[cyan]Downloading Run Logs...")
 
         fc.update_flows()
@@ -114,9 +115,10 @@ def update(name: str = "xpcs", date: str = None, gui: bool = True):
                 total=total,
                 description=f"[green]Downloading Runs...({completed}/{total})",
             )
-        progress.update(runs_task, completed=0, total=0)
+        # Set runs task to finished
+        progress.update(runs_task, completed=1, total=1)
 
-        for cache, total_caches in fc.update_run_logs(
+        for cache, total_caches, batch, total_batches, log_cache_progress, total in fc.update_run_logs(
             lambda x, n: progress.update(
                 run_logs_task,
                 completed=x,
@@ -126,9 +128,9 @@ def update(name: str = "xpcs", date: str = None, gui: bool = True):
         ):
             progress.update(
                 run_logs_cache,
-                advance=1,
-                total=total_caches,
-                description=f"[yellow]Updating Run Log Cache...({cache})",
+                completed=log_cache_progress,
+                total=total,
+                description=f"[yellow]Updating Cache...({cache} -- Batch {batch}/{total_batches})",
             )
 
 
