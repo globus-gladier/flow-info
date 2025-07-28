@@ -81,6 +81,37 @@ def summary(refresh_cache_info: bool=False):
         )
     console.print(table)
 
+@app.command()
+def _partition_previous_logs():
+    """This is an old internal module for migrating old logs to the new internal format.
+    This should probably be removed unless we have a need to fix up old logs."""
+    config = get_config()
+    year_month = "2025-01"
+    import json
+
+    for year_month in ["2024-11", "2024-12"]:
+        fc = get_flows_cache(name, config)
+        runs = list(fc.get_runs([year_month]))
+        runs.sort(key=lambda x: x["start_time"])
+        console.log(f"GOT {len(runs)}")
+        BUCKET_SIZE = 2500
+        def partition_buckets(runs):
+            return enumerate(
+                [
+                    runs[i : i + BUCKET_SIZE]
+                    for i in range(0, len(runs), BUCKET_SIZE)
+                ]
+            )
+        with open(f"flow_info/{year_month}-logs.json") as f:
+            data = json.loads(f.read())
+        for bucket_num, bucket in partition_buckets(runs):
+            new_data = {"logs": {}}
+            for run in bucket:
+                if run["run_id"] in data["logs"]:
+                    new_data["logs"][run["run_id"]] = data["logs"][run["run_id"]]
+            log.debug(f"Found {len(new_data['logs'])} matching logs for {year_month} -- {bucket_num}")
+            fc.data_manager.save_run_logs(year_month, new_data, bucket_num)
+
 
 @app.command()
 def update(gui: bool = True):
