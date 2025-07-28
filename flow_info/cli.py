@@ -165,6 +165,15 @@ def update(gui: bool = True):
 
 
 @app.command()
+def plot_runs_over_time():
+    config = get_config()
+    fc = get_flows_cache(config)
+    datetimes = [datetime.datetime.fromisoformat(r["start_time"]) for r in fc.get_runs()]
+    filename = plots.plot_runs_over_time(datetimes, f'{config["beamlines"]["current_app"]}')
+    console.print(f"Plotted {len(datetimes)} runs and saved to {filename}")
+
+
+@app.command()
 def transfer_usage(
     name: str = "xpcs",
     date: str = None,

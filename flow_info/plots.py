@@ -5,6 +5,56 @@ import pandas as pd
 import plotly.express as px
 
 
+import matplotlib.pyplot as plt
+from datetime import datetime, timedelta
+import matplotlib.dates as mdates
+
+from zoneinfo import ZoneInfo
+
+
+def plot_runs_over_time(datetimes, name="mybeamline"):
+    """
+    Plot runs over time, given a list of datetimes and the name of the file to save
+    as. This bins the datetimes into a range per-month, over the course of about a
+    year or whatever range takes place for the given set of datetimes.
+    """
+    # Determine the range of dates
+    start_date = min(datetimes)
+    end_date = max(datetimes)
+
+    # Create bi-monthly bin edges (1st and 15th of each month)
+    bin_edges = []
+    current = datetime(start_date.year, start_date.month, 1, tzinfo=ZoneInfo("UTC"))
+    while current <= end_date + timedelta(days=31):
+        bin_edges.append(current)
+        if current.day == 1:
+            current = current.replace(day=15)
+        else:
+            # Move to the 1st of the next month
+            if current.month == 12:
+                current = current.replace(year=current.year + 1, month=1, day=1)
+            else:
+                current = current.replace(month=current.month + 1, day=1)
+
+    # Plot histogram with bi-monthly bins
+    plt.figure(figsize=(12, 6))
+    plt.hist(datetimes, bins=bin_edges, color='cornflowerblue', edgecolor='black')
+
+    # Format x-axis to show bi-monthly labels
+    plt.gca().xaxis.set_major_locator(mdates.MonthLocator())
+    plt.gca().xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
+
+    # plt.xlabel('Bi-Monthly Interval Start')
+    plt.ylabel('Runs')
+    plt.title(f'Runs over time for {name}')
+    plt.xticks(rotation=45)
+    plt.tight_layout()
+
+    filename = f"{name}-runs-over-time.png"
+    plt.savefig(filename, bbox_inches="tight", pad_inches="layout")
+    return filename
+
+
 def plot_histogram(flow_logs, include=None):
     """Create a histogram of the step runtimes
 
