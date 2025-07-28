@@ -14,9 +14,9 @@ class DataManager:
     FLOWS_FILENAME = "{name}-{year_month}-flows.json"
     CACHE_INFO_FILENAME = "cache_info.json"
 
-    def __init__(self, config, name):
+    def __init__(self, config):
         self.config = config
-        self.name = name
+        self.name = self.config["beamlines"]["current_app"]
         self.basepath = pathlib.Path(self.config["beamlines"]["data_path"]).absolute()
         self.cache_info = self.load_data(self.basepath / self.CACHE_INFO_FILENAME)
         if self.name not in self.cache_info:

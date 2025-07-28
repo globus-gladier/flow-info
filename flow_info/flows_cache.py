@@ -16,19 +16,23 @@ log = logging.getLogger(__name__)
 
 
 class FlowsCache:
-    def __init__(self, name: str, config: configobj.ConfigObj):
+    def __init__(self, config: configobj.ConfigObj):
 
-        self.name = name
+        self.name = config["beamlines"]["current_app"]
         self.config = config
         if self.config is None:
             raise ValueError("Config can't be none!")
-        self.runs_cache = RunsCache(self.get_client_app(), self.config, self.name)
-        self.run_logs_cache = RunLogsCache(
-            self.get_client_app(), self.config, self.name
-        )
-        self.data_manager = DataManager(self.config, name)
+        self.runs_cache = RunsCache(self.get_client_app(), self.config)
+        self.run_logs_cache = RunLogsCache(self.get_client_app(), self.config)
+        self.data_manager = DataManager(self.config)
 
     def get_client_app(self):
+        app_name = f"FlowInfo-{self.config['beamlines'][self.name]}"
+
+        if self.config["beamlines"][self.name].get("client_type") == "user":
+            client_id = self.config["beamlines"][self.name]["client_id"]
+            return globus_sdk.UserApp(app_name=app_name, client_id=client_id)
+
         key = f"{self.name.upper()}_CLIENT_SECRET"
         secret = os.getenv(key)
         if not secret:
@@ -36,7 +40,7 @@ class FlowsCache:
             raise ConfigException(f"Please set {key} to fetch data for client")
 
         app = globus_sdk.ClientApp(
-            app_name=f"FlowInfo-{self.config['beamlines'][self.name]}",
+            app_name=app_name,
             client_id=self.config["beamlines"][self.name]["client_id"],
             client_secret=secret,
         )
@@ -48,8 +52,10 @@ class FlowsCache:
     def get_flows(self, year_month):
         return self.data_manager.load_flows(year_month)
 
-    def get_runs(self, year_month: str):
-        return self.runs_cache.get_runs(year_month)
+    def get_runs(self, year_months: list = []):
+        if not year_months:
+            year_months = self.get_available_caches()
+        return self.runs_cache.get_runs(year_months)
 
     def get_run_logs(self, year_month: str, runs: list):
         yield from self.run_logs_cache.get_run_logs(year_month, runs)
@@ -83,23 +89,31 @@ class FlowsCache:
         for cache_idx, cache in enumerate(caches):
             log.debug(f"Fetching {cache} runs...")
             runs = self.runs_cache.get_runs([cache])
-            for batch, num_batches in self.run_logs_cache.update_run_logs(runs, cache, callback):
+            for batch, num_batches in self.run_logs_cache.update_run_logs(
+                runs, cache, callback
+            ):
                 cache_progress = (cache_idx + 1) / len(caches) * 100
                 batch_progress = (batch + 1) / num_batches * 100 / len(caches)
                 progress = cache_progress + batch_progress
                 total = 100
                 yield cache, len(caches), batch, num_batches, progress, total
 
-
     def refresh_cache_info(self):
         for year_month in self.get_available_caches():
             runs = list(self.get_runs([year_month]))
+            if year_month not in self.data_manager.cache_info[self.name]:
+                self.data_manager.cache_info[self.name][year_month] = {}
             self.data_manager.cache_info[self.name][year_month]["runs"] = len(runs)
             for bucket_num, _ in self.run_logs_cache.partition_buckets(runs):
-                logs = self.data_manager.load_run_logs(year_month, bucket_num)["logs"]
-                self.data_manager.cache_info[self.name][year_month]["logs"][str(bucket_num)] = len(logs)
+                logs = self.data_manager.load_run_logs(year_month, bucket_num).get(
+                    "logs", []
+                )
+                if "logs" not in self.data_manager.cache_info[self.name][year_month]:
+                    self.data_manager.cache_info[self.name][year_month]["logs"] = {}
+                self.data_manager.cache_info[self.name][year_month]["logs"][
+                    str(bucket_num)
+                ] = len(logs)
             self.data_manager.save_cache_info()
-
 
     def summary(self, year_months: list = None) -> list:
 
@@ -108,13 +122,15 @@ class FlowsCache:
 
         for year_month in year_months:
             runs = self.data_manager.cache_info[self.name][year_month]["runs"]
-            logs = sum(self.data_manager.cache_info[self.name][year_month]["logs"].values())
+            logs = sum(
+                self.data_manager.cache_info[self.name][year_month]["logs"].values()
+            )
             missing = runs - logs
             summaries.append(
                 {
                     "name": self.name,
                     "year_month": year_month,
-                    "flows": len(self.get_flows(year_month)),
+                    "flows": len(self.get_flows(year_month).get("flows", [])),
                     "runs": runs,
                     "run_logs": logs,
                     "missing_logs": missing,

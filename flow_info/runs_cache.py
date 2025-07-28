@@ -11,11 +11,17 @@ MAX_SEARCH_LIMIT = 10000
 
 
 class RunsCache:
-    def __init__(self, app: globus_sdk.GlobusApp, config, name):
+    def __init__(self, app: globus_sdk.GlobusApp, config):
         self.app = app
-        self.data_manager = DataManager(config, name)
+        self.data_manager = DataManager(config)
+        self.base_filters = []
         # self.config = config
-        # self.name = name
+        name = config["beamlines"]["current_app"]
+        filter_run_tags = config["beamlines"][name].get("filter_run_tags")
+        if filter_run_tags:
+            self.base_filters.append(
+                {"type": "match_all", "field_name": "tags", "values": filter_run_tags}
+            )
 
     def get_runs(self, year_months: list = None):
         for year_month in year_months or self.data_manager.get_available_year_months():
@@ -117,7 +123,7 @@ class RunsCache:
                     "date_interval": di,
                 }
             ],
-            "filters": self.get_date_filters(date_str),
+            "filters": self.base_filters + self.get_date_filters(date_str),
         }
         r = sc.post_search("2a318659-a547-4b48-a0fc-e0c19081a960", request)
         f = self.get_date_filters(date_str)
@@ -133,7 +139,7 @@ class RunsCache:
     def get_incomplete_buckets(self):
         incomplete_buckets = []
         for bucket in self.get_buckets_by_date():
-            saved_runs = self.data_manager.load_runs(bucket["value"])
+            saved_runs = self.data_manager.load_runs(bucket["value"]) or {"runs": []}
             log.info(f"{bucket['value']}: {len(saved_runs['runs'])}/{bucket['count']}.")
             if len(saved_runs["runs"]) < bucket["count"]:
                 if bucket["count"] > MAX_SEARCH_LIMIT:
@@ -190,7 +196,7 @@ class RunsCache:
                 "limit": MAX_SEARCH_LIMIT,
                 "@version": "query#1.0.0",
                 "sort": [{"field_name": "start_time", "order": "asc"}],
-                "filters": self.get_date_filters(bucket["value"]),
+                "filters": self.base_filters + self.get_date_filters(bucket["value"]),
             }
 
             # Check the buckets for a date change. If the month has clicked over, we want

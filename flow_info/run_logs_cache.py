@@ -15,16 +15,18 @@ class RunLogsCache:
 
     BUCKET_SIZE = 2500
 
-    def __init__(self, app: globus_sdk.GlobusApp, config, name, workers=3):
+    def __init__(self, app: globus_sdk.GlobusApp, config, workers=3):
         self.app = app
-        self.data_manager = DataManager(config, name)
+        self.data_manager = DataManager(config)
         self.workers = workers
 
     def get_run_logs(self, year_month: str, runs):
         run_list = sorted(runs, key=lambda x: x["start_time"])
         buckets = list(self.partition_buckets(run_list))
         for bucket_num, bucket in buckets:
-            run_logs = self.data_manager.load_run_logs(year_month, bucket_num) or {"logs": {}}
+            run_logs = self.data_manager.load_run_logs(year_month, bucket_num) or {
+                "logs": {}
+            }
             for run in bucket:
                 yield run_logs["logs"].get(run["run_id"])
 
@@ -40,7 +42,11 @@ class RunLogsCache:
             )
             exc = None
             try:
-                asyncio.run(self._update_run_logs_loop(bucket, run_logs, bucket_num, len(run_list), callback))
+                asyncio.run(
+                    self._update_run_logs_loop(
+                        bucket, run_logs, bucket_num, len(run_list), callback
+                    )
+                )
                 yield bucket_num, len(buckets)
             except KeyboardInterrupt as e:
                 log.warning("Interrupt Received! Saving and exciting...")
@@ -86,7 +92,14 @@ class RunLogsCache:
             ]
         )
 
-    async def _update_run_logs_loop(self, runs: list, run_logs: dict, bucket_number: int, total_runs, callback: callable):
+    async def _update_run_logs_loop(
+        self,
+        runs: list,
+        run_logs: dict,
+        bucket_number: int,
+        total_runs,
+        callback: callable,
+    ):
         # Prep the queue
         fetch_queue = asyncio.Queue()
         rejected = []

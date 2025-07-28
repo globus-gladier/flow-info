@@ -30,24 +30,23 @@ def fmt_time(seconds_passed: int) -> str:
 TYPER_OP_LIMIT = typer.Option(default=0, help="Limit the amount of runs to examine.")
 
 
-def get_flows_cache(name: str = "xpcs", config=None) -> flow_info.FlowInfo:
+def get_flows_cache(config) -> flow_info.FlowInfo:
     """Return a FlowInfo object for the given name."""
     # if date is not None:
     #     date = datetime.datetime.strptime(date, "%Y-%m-%d")
     # else:
     #     date = datetime.datetime.now()
-    return flows_cache.FlowsCache(name, config)
+    return flows_cache.FlowsCache(config)
 
 
-def get_config(name: str = "xpcs"):
-    if name is None:
-        raise ConfigException("Flows Cache cannot be created with name=None")
-
+def get_config():
     # self.date = date or datetime.datetime.now()
     date = datetime.datetime(year=2025, month=5, day=1)
     cfg_filename = pathlib.Path(__file__).parent.parent / "beamlines.cfg"
     log.info(f"Using CFG filename: {cfg_filename}")
     config = configobj.ConfigObj(str(cfg_filename))
+
+    name = config["beamlines"]["current_app"]
 
     if not config["beamlines"].get(name):
         err = f'"{name}" is not configured in {cfg_filename}. Please add the following entry under [ "beamlines" ]\n\n'
@@ -63,12 +62,12 @@ def get_config(name: str = "xpcs"):
 
 
 @app.command()
-def summary(name: str = "xpcs", date: str = None, refresh_cache_info: bool=False):
+def summary(refresh_cache_info: bool=False):
     items = ["name", "date", "flows", "runs", "run_logs", "missing_logs"]
     table = Table(*items)
     config = get_config()
 
-    fc = get_flows_cache(name, config)
+    fc = get_flows_cache(config)
     if refresh_cache_info:
         fc.refresh_cache_info()
     for month in fc.summary():
@@ -84,8 +83,8 @@ def summary(name: str = "xpcs", date: str = None, refresh_cache_info: bool=False
 
 
 @app.command()
-def update(name: str = "xpcs", date: str = None, gui: bool = True):
-    fc = get_flows_cache(name, get_config())
+def update(gui: bool = True):
+    fc = get_flows_cache(get_config())
 
     if gui is False:
         console.print("Updating Flows")
