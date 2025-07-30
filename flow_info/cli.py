@@ -168,19 +168,21 @@ def update(
 def plot_runs_over_time():
     config = get_config()
     fc = get_flows_cache(config)
-    datetimes = [datetime.datetime.fromisoformat(r["start_time"]) for r in fc.get_runs()]
-    filename = plots.plot_runs_over_time(datetimes, f'{config["beamlines"]["current_app"]}')
+    datetimes = [
+        datetime.datetime.fromisoformat(r["start_time"]) for r in fc.get_runs()
+    ]
+    filename = plots.plot_runs_over_time(
+        datetimes, f'{config["beamlines"]["current_app"]}'
+    )
     console.print(f"Plotted {len(datetimes)} runs and saved to {filename}")
 
 
 @app.command()
 def transfer_usage(
-    name: str = "xpcs",
-    date: str = None,
     limit: int = TYPER_OP_LIMIT,
     filter_transfer_states: t.List[str] = None,
 ):
-    fi = flow_info.FlowInfo(get_flows_cache(name, date))
+    fi = flow_info.FlowInfo(get_flows_cache(get_config()))
     # Track progress through iterations of logs
     list(track(fi.load(limit=limit)))
     flow_logs = fi.get_flow_stats()
@@ -227,15 +229,13 @@ def transfer_usage(
 
 @app.command()
 def runtimes(
-    name: str = "xpcs",
-    date: str = None,
     limit: int = TYPER_OP_LIMIT,
     compute_only: bool = False,
 ):
     """
     todo: Collect number of runs present in each step
     """
-    fi = flow_info.FlowInfo(get_flows_cache(name, date))
+    fi = flow_info.FlowInfo(get_flows_cache(get_config()))
     list(track(fi.load(limit=limit, step_times_compute_only=compute_only)))
     flow_logs = fi.get_flow_stats()
 
@@ -244,11 +244,12 @@ def runtimes(
         for k in flow_logs.keys()
         if "_step_time" in k and k != "total_step_time"
     ]
-    t_states.append("corr_execution_time")
 
-    table = Table("Name", "Total Compute Time", "Average Compute Time", "Min", "Max", "Corr Time")
+    table = Table(
+        "Name", "Total Compute Time", "Average Compute Time", "Min", "Max", "Corr Time"
+    )
     for state in t_states:
-        btime = f"{state}_step_time" if state != "corr_execution_time" else "corr_execution_time"
+        btime = f"{state}_step_time"
         table.add_row(
             state,
             fmt_time(flow_logs[btime].sum()),

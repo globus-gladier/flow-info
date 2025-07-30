@@ -11,14 +11,13 @@ log = logging.getLogger(__name__)
 
 
 class FlowInfo:
-    """A class to inspect and describe Globus Flow runs.
-    """
+    """A class to inspect and describe Globus Flow runs."""
 
     transfer_ap_urls = [
         # Old Transfer AP -- Remove after Feb 2025
         "https://actions.automate.globus.org/transfer/transfer/",
         # New Transfer AP
-        "https://transfer.actions.globus.org/transfer/"
+        "https://transfer.actions.globus.org/transfer/",
     ]
     compute_ap_urls = [
         "https://compute.actions.globus.org",
@@ -29,13 +28,19 @@ class FlowInfo:
         self.missing_run_logs = 0
         self.flow_stats = {}
 
+        self.flows = {
+            f["id"]: f for f in self.cache.get_flows(self.cache._get_year_month_now())
+        }
+        log.debug(f"collected {len(self.flows)} flows.")
+
     def load(self, limit=20, step_times_compute_only=False):
         """Load a flow's executions
 
         Args:
             limit (int, optional): The number of flow actions to load. Defaults 100.
         """
-        runs = self.cache.runs[0:limit] if limit else self.cache.runs
+        runs = list(self.cache.get_runs([self.cache._get_year_month_now()]))
+        # runs = self.cache.runs[0:limit] if limit else self.cache.load_runs()
         log.debug(f"Fetching metadata for {len(runs)} runs...")
         return self._extract_times(runs, step_times_compute_only)
 
@@ -56,11 +61,7 @@ class FlowInfo:
         Returns:
             Dict: A dict of step name and action url
         """
-        flow_dfn = None
-        for flow in self.cache.flows:
-            if flow_id == flow["id"]:
-                flow_dfn = flow
-                break
+        flow_dfn = self.flows.get(flow_id)
         if not flow_dfn:
             raise ValueError(f"Could not find flow {flow_id}")
 
@@ -104,20 +105,28 @@ class FlowInfo:
         """
         self.missing_run_logs = 0
         all_res = pd.DataFrame()
-        for flow_run in flow_runs:
+
+        for flow_run, flow_log in zip(flow_runs, self.cache.get_run_logs(flow_runs)):
             if flow_run["status"] != "SUCCEEDED":
                 log.debug(f"Skipping run {flow_run['run_id']} due to status: {flow_run['status']}")
                 continue
 
             log.debug(f"Fetching run action logs for {flow_run['run_id']}")
-            flow_logs = self.cache.get_run_logs(flow_run['run_id'])
             if not flow_logs:
                 self.missing_run_logs += 1
                 continue
 
             # Collect info about the flow run
             flow_res = {"start": flow_run["start_time"]}
-            flow_res.update(self.extract_bytes_transferred(flow_run["flow_id"], flow_logs))
+            try:
+                flow_res.update(
+                    self.extract_bytes_transferred(flow_run["flow_id"], flow_logs)
+                )
+            except ValueError:
+                log.debug(
+                    f"Skipping run {flow_run['run_id']} due to failure to lookup flow {flow_run['flow_id']}"
+                )
+                continue
 
             # Filter state names by compute if required
             filter_names = self.filter_ap_states_compute(flow_run["flow_id"]) if step_times_compute_only else []

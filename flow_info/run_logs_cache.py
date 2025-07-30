@@ -17,10 +17,14 @@ class RunLogsCache:
 
     def __init__(self, app: globus_sdk.GlobusApp, config, workers=3):
         self.app = app
+        self.flows_client = globus_sdk.FlowsClient(app=self.app)
         self.data_manager = DataManager(config)
         self.workers = workers
 
-    def get_run_logs(self, year_month: str, runs):
+    def get_run_logs(self, runs, year_month: str):
+        """
+        Returns a list of run logs matching the
+        """
         run_list = sorted(runs, key=lambda x: x["start_time"])
         buckets = list(self.partition_buckets(run_list))
         for bucket_num, bucket in buckets:
@@ -28,7 +32,7 @@ class RunLogsCache:
                 "logs": {}
             }
             for run in bucket:
-                yield run_logs["logs"].get(run["run_id"])
+                yield run["run_id"], run_logs["logs"].get(run["run_id"])
 
     def update_run_logs(self, runs, year_month, callback=None):
         run_list = sorted(runs, key=lambda x: x["start_time"])
@@ -116,12 +120,11 @@ class RunLogsCache:
         log.debug(
             f"{len(rejected)}/{bucket_total} logs expired, {len(accounted)}/{bucket_total} accounted for, and {fetch_queue.qsize()}/{bucket_total} need to be fetched."
         )
-        flows_client = globus_sdk.FlowsClient(app=self.app)
         tasks = []
         for i in range(self.workers):
             task = asyncio.create_task(
                 self._update_single_run_log(
-                    f"worker-{i}", flows_client, fetch_queue, run_logs
+                    f"worker-{i}", self.flows_client, fetch_queue, run_logs
                 )
             )
             tasks.append(task)

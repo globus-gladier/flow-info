@@ -13,6 +13,7 @@ MAX_SEARCH_LIMIT = 10000
 class RunsCache:
     def __init__(self, app: globus_sdk.GlobusApp, config):
         self.app = app
+        self.search_client = globus_sdk.SearchClient(app=self.app)
         self.data_manager = DataManager(config)
         self.base_filters = []
         # self.config = config
@@ -100,7 +101,6 @@ class RunsCache:
 
         :param date_str: A date string. Supported "2025-07", "2025-07-01" or isoformat with time.
         """
-        sc = globus_sdk.SearchClient(app=self.app)
         date_interval = self.get_date_interval(date_str)
         if date_interval is None:
             di = "month"
@@ -125,7 +125,7 @@ class RunsCache:
             ],
             "filters": self.base_filters + self.get_date_filters(date_str),
         }
-        r = sc.post_search("2a318659-a547-4b48-a0fc-e0c19081a960", request)
+        r = self.search_client.post_search("2a318659-a547-4b48-a0fc-e0c19081a960", request)
         f = self.get_date_filters(date_str)
         if f:
             fs = f"{f[0]['values'][0]['gte']} -- {f[0]['values'][0]['lt']}"
@@ -180,7 +180,6 @@ class RunsCache:
         return incomplete_buckets
 
     def update_runs(self):
-        sc = globus_sdk.SearchClient(app=self.app)
         buckets = self.get_incomplete_buckets()
         total = sum([b["count"] for b in buckets])
         current = sum([b["current"] for b in buckets])
@@ -214,7 +213,7 @@ class RunsCache:
                 current_run_batch = year_month_batch_key
 
             # Add the latest batch of runs from lobus Search
-            for result in sc.paginated.post_search(
+            for result in self.search_client.paginated.post_search(
                 "2a318659-a547-4b48-a0fc-e0c19081a960", request
             ):
                 runs = [e["entries"][0]["content"] for e in result["gmeta"]]

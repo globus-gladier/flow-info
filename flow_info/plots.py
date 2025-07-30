@@ -12,33 +12,24 @@ import matplotlib.dates as mdates
 from zoneinfo import ZoneInfo
 
 
-def plot_runs_over_time(datetimes, name="mybeamline"):
+def plot_runs_over_time(datetimes, name="mybeamline", frequency="D"):
     """
     Plot runs over time, given a list of datetimes and the name of the file to save
     as. This bins the datetimes into a range per-month, over the course of about a
     year or whatever range takes place for the given set of datetimes.
-    """
-    # Determine the range of dates
-    start_date = min(datetimes)
-    end_date = max(datetimes)
 
-    # Create bi-monthly bin edges (1st and 15th of each month)
-    bin_edges = []
-    current = datetime(start_date.year, start_date.month, 1, tzinfo=ZoneInfo("UTC"))
-    while current <= end_date + timedelta(days=31):
-        bin_edges.append(current)
-        if current.day == 1:
-            current = current.replace(day=15)
-        else:
-            # Move to the 1st of the next month
-            if current.month == 12:
-                current = current.replace(year=current.year + 1, month=1, day=1)
-            else:
-                current = current.replace(month=current.month + 1, day=1)
+    frequency: A valid pandas frequency (W-Mon for weekly, ME for monthly). More see here:
+    https://pandas.pydata.org/pandas-docs/stable/user_guide/timeseries.html#offset-aliases
+    """
+    # Create a DataFrame with a count column
+    df = pd.DataFrame({'datetime': datetimes, 'count': 1})
+    bins = df.groupby(pd.Grouper(key='datetime', freq=frequency)).sum()
+    bins = list(bins.to_dict()["count"].keys())
+    bins = [d.date() for d in pd.to_datetime(bins)]
 
     # Plot histogram with bi-monthly bins
     plt.figure(figsize=(12, 6))
-    plt.hist(datetimes, bins=bin_edges, color='cornflowerblue', edgecolor='black')
+    plt.hist(datetimes, bins=bins, color='cornflowerblue', edgecolor='black')
 
     # Format x-axis to show bi-monthly labels
     plt.gca().xaxis.set_major_locator(mdates.MonthLocator())
@@ -146,28 +137,3 @@ def plot_gantt(
     gnt.set_xlabel("Time (s)", fontsize=25, color="black")
     gnt.tick_params(axis="both", which="major", pad=5, labelsize=25, labelcolor="black")
     plt.savefig("gantt.png", bbox_inches="tight", pad_inches="layout")
-
-
-def plot_over_time(df: pd.DataFrame):
-    fig = px.line(
-        df,
-        x="start_hour",
-        y="runs_per_hour",
-        title="Time Series with Range Slider and Selectors",
-    )
-
-    fig.update_xaxes(
-        rangeslider_visible=True,
-        rangeselector=dict(
-            buttons=list(
-                [
-                    dict(count=1, label="1m", step="month", stepmode="backward"),
-                    dict(count=6, label="6m", step="month", stepmode="backward"),
-                    dict(count=1, label="YTD", step="year", stepmode="todate"),
-                    dict(count=1, label="1y", step="year", stepmode="backward"),
-                    dict(step="all"),
-                ]
-            )
-        ),
-    )
-    fig.show()
