@@ -62,7 +62,7 @@ def get_config():
 
 
 @app.command()
-def summary(refresh_cache_info: bool=False):
+def summary(refresh_cache_info: bool = False):
     items = ["name", "date", "flows", "runs", "run_logs", "missing_logs"]
     table = Table(*items)
     config = get_config()
@@ -81,52 +81,43 @@ def summary(refresh_cache_info: bool=False):
         )
     console.print(table)
 
-@app.command()
-def _partition_previous_logs():
-    """This is an old internal module for migrating old logs to the new internal format.
-    This should probably be removed unless we have a need to fix up old logs."""
-    config = get_config()
-    year_month = "2025-01"
-    import json
-
-    for year_month in ["2024-11", "2024-12"]:
-        fc = get_flows_cache(name, config)
-        runs = list(fc.get_runs([year_month]))
-        runs.sort(key=lambda x: x["start_time"])
-        console.log(f"GOT {len(runs)}")
-        BUCKET_SIZE = 2500
-        def partition_buckets(runs):
-            return enumerate(
-                [
-                    runs[i : i + BUCKET_SIZE]
-                    for i in range(0, len(runs), BUCKET_SIZE)
-                ]
-            )
-        with open(f"flow_info/{year_month}-logs.json") as f:
-            data = json.loads(f.read())
-        for bucket_num, bucket in partition_buckets(runs):
-            new_data = {"logs": {}}
-            for run in bucket:
-                if run["run_id"] in data["logs"]:
-                    new_data["logs"][run["run_id"]] = data["logs"][run["run_id"]]
-            log.debug(f"Found {len(new_data['logs'])} matching logs for {year_month} -- {bucket_num}")
-            fc.data_manager.save_run_logs(year_month, new_data, bucket_num)
-
 
 @app.command()
-def update(gui: bool = True):
+def update(
+    gui: bool = True, flows: bool = False, runs: bool = False, logs: bool = False
+):
     fc = get_flows_cache(get_config())
+    fc.login()
+
+    flag = flows or runs or logs
+    if flag:
+        flows, runs, logs = flag and flows, flag and runs, flag and logs
+    else:
+        flows = runs = logs = True
 
     if gui is False:
-        console.print("Updating Flows")
-        fc.update_flows()
-        console.print("Updating Runs...")
-        for current, total in fc.update_runs():
-            console.print(f"Fetching: ({current}/{total})")
-        console.print("Updating Run Logs")
-        for cache, total_caches, batch, total_batches, log_cache_progress, total in fc.update_run_logs(lambda x, n: console.print(f"Updating runs {x}/{n}")
-        ):
-            console.print(f"Updating Cache {cache}, Batch ({batch}/{total_batches}) Total Progress {log_cache_progress:.2f}%")
+        if flows:
+            console.print("Updating Flows")
+            fc.update_flows()
+        if runs:
+            console.print("Updating Runs...")
+            for current, total in fc.update_runs():
+                console.print(f"Fetching: ({current}/{total})")
+        if logs:
+            console.print("Updating Run Logs")
+            for (
+                cache,
+                total_caches,
+                batch,
+                total_batches,
+                log_cache_progress,
+                total,
+            ) in fc.update_run_logs(
+                lambda x, n: console.print(f"Updating runs {x}/{n}")
+            ):
+                console.print(
+                    f"Updating Cache {cache}, Batch ({batch}/{total_batches}) Total Progress {log_cache_progress:.2f}%"
+                )
         return
 
     with Progress() as progress:
@@ -136,32 +127,41 @@ def update(gui: bool = True):
         run_logs_cache = progress.add_task("[yellow]Updating Cache...")
         run_logs_task = progress.add_task("[cyan]Downloading Run Logs...")
 
-        fc.update_flows()
-        progress.update(flows_task, advance=100.0)
-        for completed, total in fc.update_runs():
-            progress.update(
-                runs_task,
-                completed=completed,
-                total=total,
-                description=f"[green]Downloading Runs...({completed}/{total})",
-            )
-        # Set runs task to finished
-        progress.update(runs_task, completed=1, total=1)
-
-        for cache, total_caches, batch, total_batches, log_cache_progress, total in fc.update_run_logs(
-            lambda x, n: progress.update(
-                run_logs_task,
-                completed=x,
-                total=n,
-                description=f"[cyan]Downloading Run Logs...({x}/{n})",
-            )
-        ):
-            progress.update(
-                run_logs_cache,
-                completed=log_cache_progress,
-                total=total,
-                description=f"[yellow]Updating Cache...({cache} -- Batch {batch}/{total_batches})",
-            )
+        if flows:
+            fc.update_flows()
+            progress.update(flows_task, advance=100.0)
+        if runs:
+            for completed, total in fc.update_runs():
+                progress.update(
+                    runs_task,
+                    completed=completed,
+                    total=total,
+                    description=f"[green]Downloading Runs...({completed}/{total})",
+                )
+            # Set runs task to finished
+            progress.update(runs_task, completed=1, total=1)
+        if logs:
+            for (
+                cache,
+                total_caches,
+                batch,
+                total_batches,
+                log_cache_progress,
+                total,
+            ) in fc.update_run_logs(
+                lambda x, n: progress.update(
+                    run_logs_task,
+                    completed=x,
+                    total=n,
+                    description=f"[cyan]Downloading Run Logs...({x}/{n})",
+                )
+            ):
+                progress.update(
+                    run_logs_cache,
+                    completed=log_cache_progress,
+                    total=total,
+                    description=f"[yellow]Updating Cache...({cache} -- Batch {batch}/{total_batches})",
+                )
 
 
 @app.command()
