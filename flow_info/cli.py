@@ -84,7 +84,7 @@ def summary(refresh_cache_info: bool = False):
 
 @app.command()
 def update(
-    gui: bool = True, flows: bool = False, runs: bool = False, logs: bool = False
+    gui: bool = True, flows: bool = False, runs: bool = False, logs: bool = False, workers: int = 3,
 ):
     fc = get_flows_cache(get_config())
     fc.login()
@@ -97,26 +97,26 @@ def update(
 
     if gui is False:
         if flows:
-            console.print("Updating Flows")
+            console.print("Updating Flows...")
             fc.update_flows()
         if runs:
             console.print("Updating Runs...")
             for current, total in fc.update_runs():
                 console.print(f"Fetching: ({current}/{total})")
         if logs:
-            console.print("Updating Run Logs")
+            console.print("Updating Run Logs...")
             for (
                 cache,
-                total_caches,
+                caches,
                 batch,
                 total_batches,
                 log_cache_progress,
                 total,
             ) in fc.update_run_logs(
-                lambda x, n: console.print(f"Updating runs {x}/{n}")
+                lambda x, n: console.print(f"Updating runs {x}/{n}"), workers=workers
             ):
                 console.print(
-                    f"Updating Cache {cache}, Batch ({batch}/{total_batches}) Total Progress {log_cache_progress:.2f}%"
+                    f"Updating Cache {cache} ({(caches.index(cache) + 1)}/{len(caches)}), Batch ({batch}/{total_batches}) Total Progress {log_cache_progress:.2f}%"
                 )
         return
 
@@ -143,7 +143,7 @@ def update(
         if logs:
             for (
                 cache,
-                total_caches,
+                caches,
                 batch,
                 total_batches,
                 log_cache_progress,
@@ -154,13 +154,14 @@ def update(
                     completed=x,
                     total=n,
                     description=f"[cyan]Downloading Run Logs...({x}/{n})",
-                )
+                ),
+                workers,
             ):
                 progress.update(
                     run_logs_cache,
                     completed=log_cache_progress,
                     total=total,
-                    description=f"[yellow]Updating Cache...({cache} -- Batch {batch}/{total_batches})",
+                    description=f"[yellow]Updating Cache...({cache} [{(caches.index(cache) + 1)}/{len(caches)}] -- Batch {batch}/{total_batches})",
                 )
 
 

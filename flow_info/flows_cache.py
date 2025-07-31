@@ -111,7 +111,7 @@ class FlowsCache:
         log.info(f'Fetched {len(flows["flows"])} Flows from service.')
         self.data_manager.save_flows(self._get_year_month_now(), flows)
 
-    def update_run_logs(self, callback):
+    def update_run_logs(self, callback, workers: int):
         # Only update the last four months, the maximum duration we could see logs before they
         # are deleted.
         caches = sorted(self.get_available_caches())[-4:]
@@ -119,13 +119,14 @@ class FlowsCache:
             log.debug(f"Fetching {cache} runs...")
             runs = self.runs_cache.get_runs([cache])
             for batch, num_batches in self.run_logs_cache.update_run_logs(
-                runs, cache, callback
+                runs, cache, callback, workers
             ):
-                cache_progress = (cache_idx + 1) / len(caches) * 100
-                batch_progress = (batch + 1) / num_batches * 100 / len(caches)
+                # Get percentage of caches we've got through so far
+                cache_progress = (cache_idx) / len(caches) * 100
+                batch_progress = (batch) / num_batches * 100 / len(caches)
                 progress = cache_progress + batch_progress
                 total = 100
-                yield cache, len(caches), batch, num_batches, progress, total
+                yield cache, caches, batch + 1, num_batches, progress, total
 
     def refresh_cache_info(self):
         for year_month in self.get_available_caches():

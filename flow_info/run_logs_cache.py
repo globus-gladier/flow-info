@@ -15,11 +15,10 @@ class RunLogsCache:
 
     BUCKET_SIZE = 2500
 
-    def __init__(self, app: globus_sdk.GlobusApp, config, workers=3):
+    def __init__(self, app: globus_sdk.GlobusApp, config):
         self.app = app
         self.flows_client = globus_sdk.FlowsClient(app=self.app)
         self.data_manager = DataManager(config)
-        self.workers = workers
 
     def get_run_logs(self, runs, year_month: str):
         """
@@ -34,7 +33,7 @@ class RunLogsCache:
             for run in bucket:
                 yield run["run_id"], run_logs["logs"].get(run["run_id"])
 
-    def update_run_logs(self, runs, year_month, callback=None):
+    def update_run_logs(self, runs, year_month, callback, workers):
         run_list = sorted(runs, key=lambda x: x["start_time"])
         buckets = list(self.partition_buckets(run_list))
         for bucket_num, bucket in buckets:
@@ -44,21 +43,20 @@ class RunLogsCache:
             log.debug(
                 f"Loaded {len(run_logs['logs'])} run logs for {year_month} bucket {bucket_num} runs {len(bucket)}"
             )
-            exc = None
             try:
-                asyncio.run(
+                runs_saved = asyncio.run(
                     self._update_run_logs_loop(
-                        bucket, run_logs, bucket_num, len(run_list), callback
+                        bucket, run_logs, bucket_num, len(run_list), callback, workers
                     )
                 )
                 yield bucket_num, len(buckets)
-            except KeyboardInterrupt as e:
+
+                if runs_saved:
+                    self.data_manager.save_run_logs(year_month, run_logs, bucket_num)
+            except KeyboardInterrupt:
                 log.warning("Interrupt Received! Saving and exciting...")
-                exc = e
-            finally:
                 self.data_manager.save_run_logs(year_month, run_logs, bucket_num)
-                if exc:
-                    raise KeyboardInterrupt()
+                raise
 
     async def _update_single_run_log(
         self,
@@ -71,7 +69,6 @@ class RunLogsCache:
         while True:
             try:
                 run_id = await queue.get()
-                log.debug(f"Fetching new run {run_id}")
                 run_log = await asyncio.to_thread(
                     flows_client.get_run_logs, run_id, limit=100
                 )
@@ -79,7 +76,6 @@ class RunLogsCache:
 
                 # Notify the queue that the "work item" has been processed.
                 queue.task_done()
-                log.debug("Success!")
             except Exception as e:
                 log.exception(e)
 
@@ -103,7 +99,11 @@ class RunLogsCache:
         bucket_number: int,
         total_runs,
         callback: callable,
+        workers: int,
     ):
+        """
+        Run all workers and return the list of fetched logs.
+        """
         # Prep the queue
         fetch_queue = asyncio.Queue()
         rejected = []
@@ -117,11 +117,15 @@ class RunLogsCache:
                 fetch_queue.put_nowait(run["run_id"])
 
         bucket_total = sum((len(rejected), len(accounted), fetch_queue.qsize()))
+        to_fetch = fetch_queue.qsize()
         log.debug(
-            f"{len(rejected)}/{bucket_total} logs expired, {len(accounted)}/{bucket_total} accounted for, and {fetch_queue.qsize()}/{bucket_total} need to be fetched."
+            f"{len(rejected)}/{bucket_total} logs expired, {len(accounted)}/{bucket_total} accounted for, and {to_fetch}/{bucket_total} need to be fetched."
         )
+
+        if to_fetch == 0:
+            return
         tasks = []
-        for i in range(self.workers):
+        for i in range(workers):
             task = asyncio.create_task(
                 self._update_single_run_log(
                     f"worker-{i}", self.flows_client, fetch_queue, run_logs
@@ -143,3 +147,4 @@ class RunLogsCache:
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
+        return to_fetch
