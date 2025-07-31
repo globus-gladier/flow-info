@@ -106,21 +106,18 @@ class FlowInfo:
         self.missing_run_logs = 0
         all_res = pd.DataFrame()
 
-        for flow_run, flow_log in zip(flow_runs, self.cache.get_run_logs(flow_runs)):
+        for flow_run, flow_logs in zip(flow_runs, self.cache.get_run_logs(flow_runs)):
+            flow_log_id, flow_log = flow_logs
+
             if flow_run["status"] != "SUCCEEDED":
                 log.debug(f"Skipping run {flow_run['run_id']} due to status: {flow_run['status']}")
-                continue
-
-            log.debug(f"Fetching run action logs for {flow_run['run_id']}")
-            if not flow_logs:
-                self.missing_run_logs += 1
                 continue
 
             # Collect info about the flow run
             flow_res = {"start": flow_run["start_time"]}
             try:
                 flow_res.update(
-                    self.extract_bytes_transferred(flow_run["flow_id"], flow_logs)
+                    self.extract_bytes_transferred(flow_run["flow_id"], flow_log)
                 )
             except ValueError:
                 log.debug(
@@ -130,7 +127,7 @@ class FlowInfo:
 
             # Filter state names by compute if required
             filter_names = self.filter_ap_states_compute(flow_run["flow_id"]) if step_times_compute_only else []
-            flow_res.update(self.extract_step_times(flow_logs, filter_state_names=filter_names))
+            flow_res.update(self.extract_step_times(flow_log, filter_state_names=filter_names))
 
             # Combine dataframes
             flowdf = pd.DataFrame([flow_res])
@@ -158,12 +155,25 @@ class FlowInfo:
                 stats[state_name] = {"start": lg["time"]}
             elif lg["code"] == "ActionCompleted":
                 stats[state_name]["end"] = lg["time"]
-        step_times = {
-            f"{name}_step_time": (datetime.datetime.fromisoformat(vals["end"]) - datetime.datetime.fromisoformat(vals["start"])).total_seconds() for name, vals in stats.items()
-        }
+
+            if state_name == "XpcsBoostCorr" and lg["code"] == "ActionCompleted":
+                ex_time = lg["details"]["output"]["XpcsBoostCorr"]["details"][
+                    "results"
+                ][0]["output"].get("execution_time_seconds", 0)
+                if ex_time:
+                    step_times["corr_execution_time"] = ex_time
+        
+        step_times.update(
+            {
+                f"{name}_step_time": (
+                    datetime.datetime.fromisoformat(vals["end"])
+                    - datetime.datetime.fromisoformat(vals["start"])
+                ).total_seconds()
+                for name, vals in stats.items()
+            }
+        )
         step_times["total_step_time"] = sum(step_times.values())
         return step_times
-
 
     def extract_bytes_transferred(self, flow_id: str, flow_logs: dict):
         """Extract the bytes moved by Transfer steps
@@ -177,7 +187,7 @@ class FlowInfo:
         transfer_usage = {
             "total_bytes_transferred": 0,
             "total_files_transferred": 0,
-            "total_files_skipped": 0
+            "total_files_skipped": 0,
         }
         filter_state_names = self.filter_ap_states_transfer(flow_id)
         flogs = self.filter_log_entries(flow_logs, filter_state_names, ["ActionCompleted"])
@@ -190,13 +200,16 @@ class FlowInfo:
                 log.warning(f"No statename found in log entry! (filtering on {filter_state_names})")
                 continue
 
-            transfer_usage[f"{state_name}_bytes_transferred"] = action_logs[state_name]['details']['bytes_transferred']
-            transfer_usage[f"{state_name}_files_transferred"] = action_logs[state_name]['details']['files_transferred']
-            transfer_usage[f"{state_name}_files_skipped"] = action_logs[state_name]['details']['files_skipped']
+            try:
+                transfer_usage[f"{state_name}_bytes_transferred"] = action_logs[state_name]['details']['bytes_transferred']
+                transfer_usage[f"{state_name}_files_transferred"] = action_logs[state_name]['details']['files_transferred']
+                transfer_usage[f"{state_name}_files_skipped"] = action_logs[state_name]['details']['files_skipped']
 
-            transfer_usage["total_bytes_transferred"] += action_logs[state_name]['details']['bytes_transferred']
-            transfer_usage["total_files_transferred"] += action_logs[state_name]['details']['files_transferred']
-            transfer_usage["total_files_skipped"] += action_logs[state_name]['details']['files_skipped']
+                transfer_usage["total_bytes_transferred"] += action_logs[state_name]['details']['bytes_transferred']
+                transfer_usage["total_files_transferred"] += action_logs[state_name]['details']['files_transferred']
+                transfer_usage["total_files_skipped"] += action_logs[state_name]['details']['files_skipped']
+            except KeyError:
+                continue
 
         return transfer_usage
 

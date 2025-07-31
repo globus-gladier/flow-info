@@ -264,41 +264,32 @@ def runtimes(
         f"{flow_logs['total_step_time'].mean():.2f} seconds",
         fmt_time(flow_logs["total_step_time"].min()),
         fmt_time(flow_logs["total_step_time"].max()),
-
     )
     console.print(f"Collected metadata for {len(flow_logs)} runs.")
     console.print(table)
 
 
 @app.command()
-def histogram(
-    name: str = "xpcs",
-    limit: int = TYPER_OP_LIMIT,
-):
-    fi = flow_info.FlowInfo(get_flows_cache(name, date))
-    list(track(fi.load(limit=limit)))
-    plots.plot_histogram(fi.get_flow_stats())
+def plot_step_times():
+    config = get_config()
+    fi = flow_info.FlowInfo(get_flows_cache(config))
+    amount = len(list(track(fi.load())))
+
+    app = config["beamlines"]["current_app"]
+    filename = plots.plot_step_times(fi.get_flow_stats(), name=app)
+    console.print(f"Generated gantt with {amount} logs and saved to {filename}.")
 
 
 @app.command()
-def gantt(name: str = "xpcs"):
-    fi = flow_info.FlowInfo(get_flows_cache(name, date))
-    list(track(fi.load(limit=limit)))
-    plots.plot_gantt(flow_logs, fi.get_flow_stats())
+def plot_gantt():
+    config = get_config()
+    fi = flow_info.FlowInfo(get_flows_cache(config))
+    amount = len(list(track(fi.load())))
 
-
-@app.command()
-def plot_over_time(name: str = "xpcs"):
-    fi = flow_info.FlowInfo(get_flows_cache(name, date))
-    plots.plot_over_time(fi.extract_dates())
-
-
-@app.command()
-def update_logs(name: str = "xpcs"):
-    fc = get_flows_cache(name, date)
-    for run in fc.runs:
-        console.log(f"Updating run logs for run id {run_id}")
-        fc.get_run_logs(run["run_id"])
+    app = config["beamlines"]["current_app"]
+    order = config["beamlines"][app]["flow_order"]
+    filename = plots.plot_gantt(fi.get_flow_stats(), order, name=app)
+    console.print(f"Generated gantt with {amount} logs and saved to {filename}.")
 
 
 @app.callback()

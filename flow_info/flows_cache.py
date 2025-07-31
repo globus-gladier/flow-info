@@ -31,7 +31,7 @@ class FlowsCache:
         self.app.login()
 
     def get_client_app(self):
-        app_name = f"FlowInfo-{self.config['beamlines'][self.name]}"
+        app_name = f"FlowInfo-{self.name}"
 
         if self.config["beamlines"][self.name].get("client_type") == "user":
             client_id = self.config["beamlines"][self.name]["client_id"]
