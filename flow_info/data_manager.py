@@ -62,7 +62,9 @@ class DataManager:
             self.cache_info["xpcs"][year_month] = {}
         if not self.cache_info["xpcs"][year_month].get("logs"):
             self.cache_info["xpcs"][year_month]["logs"] = {}
-        self.cache_info["xpcs"][year_month]["logs"][str(batch)] = len(data.get("logs", []))
+        self.cache_info["xpcs"][year_month]["logs"][str(batch)] = len(
+            data.get("logs", [])
+        )
         self.save_cache_info()
         self.save_data(
             self.get_filename(self.RUN_LOGS_FILENAME, year_month, batch=batch), data
@@ -90,7 +92,8 @@ class DataManager:
         basepath = pathlib.Path(self.config["beamlines"]["data_path"]).absolute()
         pattern = f"{self.name}-{year_month}" + "-run-logs-\d+.json"
         matched_filenames = [
-            filename for filename in basepath.iterdir()
+            filename
+            for filename in basepath.iterdir()
             if re.match(pattern, filename.name)
         ]
         return sum([self.get_size(f) for f in matched_filenames])

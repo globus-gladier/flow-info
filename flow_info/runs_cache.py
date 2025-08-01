@@ -125,7 +125,9 @@ class RunsCache:
             ],
             "filters": self.base_filters + self.get_date_filters(date_str),
         }
-        r = self.search_client.post_search("2a318659-a547-4b48-a0fc-e0c19081a960", request)
+        r = self.search_client.post_search(
+            "2a318659-a547-4b48-a0fc-e0c19081a960", request
+        )
         f = self.get_date_filters(date_str)
         if f:
             fs = f"{f[0]['values'][0]['gte']} -- {f[0]['values'][0]['lt']}"

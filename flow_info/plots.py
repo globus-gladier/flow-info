@@ -16,22 +16,22 @@ def plot_runs_over_time(datetimes, name="mybeamline", frequency="D"):
     https://pandas.pydata.org/pandas-docs/stable/user_guide/timeseries.html#offset-aliases
     """
     # Create a DataFrame with a count column
-    df = pd.DataFrame({'datetime': datetimes, 'count': 1})
-    bins = df.groupby(pd.Grouper(key='datetime', freq=frequency)).sum()
+    df = pd.DataFrame({"datetime": datetimes, "count": 1})
+    bins = df.groupby(pd.Grouper(key="datetime", freq=frequency)).sum()
     bins = list(bins.to_dict()["count"].keys())
     bins = [d.date() for d in pd.to_datetime(bins)]
 
     # Plot histogram with bi-monthly bins
     plt.figure(figsize=(12, 6))
-    plt.hist(datetimes, bins=bins, color='cornflowerblue', edgecolor='black')
+    plt.hist(datetimes, bins=bins, color="cornflowerblue", edgecolor="black")
 
     # Format x-axis to show bi-monthly labels
     plt.gca().xaxis.set_major_locator(mdates.MonthLocator())
-    plt.gca().xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
+    plt.gca().xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m-%d"))
 
     # plt.xlabel('Bi-Monthly Interval Start')
-    plt.ylabel('Runs')
-    plt.title(f'Runs over time for {name}')
+    plt.ylabel("Runs")
+    plt.title(f"Runs over time for {name} for {len(datetimes)} runs.")
     plt.xticks(rotation=45)
     plt.tight_layout()
 
@@ -48,20 +48,19 @@ def plot_step_times(flow_logs, name: str = "mybeamline"):
     """
     # create the graph
     steps = [s for s in flow_logs.columns if s.endswith("_step_time")]
-    new_columns = {s:s.replace("_step_time", "") for s in steps}
+    new_columns = {s: s.replace("_step_time", "") for s in steps}
     flow_logs.rename(columns=new_columns, inplace=True)
     columns = list(new_columns.values())
-    labels = {'x': f'Flow step runtimes for {name}', 'y': 'Time (s)'}
+    labels = {"x": f"Flow step runtimes for {name} using {len(flow_logs[columns[0]])} runs.", "y": "Time (s)"}
     fig = px.bar(x=columns, y=[flow_logs[c].mean() for c in columns], labels=labels)
 
     # Save the figure.
-    filename = f"{name}_step_times.png"
+    filename = f"{name}-step-times.png"
     fig.write_image(filename)
     return filename
 
 
-def plot_gantt(
-    flow_logs, flow_order, name="mybeamline"):
+def plot_gantt(flow_logs, flow_order, name="mybeamline"):
     """Plot a Gantt Chart of flow runs.
 
     Args:
@@ -82,19 +81,24 @@ def plot_gantt(
                 Task=step,
                 Start=datetime.fromtimestamp(int(start)).isoformat(),
                 Finish=datetime.fromtimestamp(int(step_time)).isoformat(),
-                Resource=resource
+                Resource=resource,
             ),
         )
         start = step_time
     df = pd.DataFrame(flow_steps)
     timeline_order = flow_order.copy()
     timeline_order.reverse()
-    fig = px.timeline(df, x_start="Start", x_end="Finish", y="Task", color="Resource", category_orders={"Task": timeline_order})
+    fig = px.timeline(
+        df,
+        x_start="Start",
+        x_end="Finish",
+        y="Task",
+        color="Resource",
+        category_orders={"Task": timeline_order},
+    )
 
-    fig.update_layout(xaxis=dict(
-                    title='Average Time in Seconds', 
-                    tickformat = '%S'))
+    fig.update_layout(xaxis=dict(title="Average Time in Seconds", tickformat="%S"))
     fig.update_yaxes(autorange="reversed")
-    filename = f"{name}_gantt.png"
+    filename = f"{name}-gantt.png"
     fig.write_image(filename)
     return filename
