@@ -2,8 +2,10 @@ import os
 import logging
 import logging.config
 import typing as t
+import pathlib
 
 import typer
+import configobj
 import humanize
 import datetime
 import pandas as pd
@@ -12,10 +14,11 @@ from rich.table import Table
 from rich.progress import track
 from rich.table import Column
 from rich.progress import Progress, BarColumn, TextColumn
-from flow_info import plots, flow_info, flows_cache
+from flow_info import plots, flow_info, flows_cache, exc
 
 log = logging.getLogger(__name__)
-app = typer.Typer(no_args_is_help=True)
+app = typer.Typer(no_args_is_help=True, pretty_exceptions_enable=False)
+
 console = Console()
 
 
@@ -27,76 +30,160 @@ def fmt_time(seconds_passed: int) -> str:
 TYPER_OP_LIMIT = typer.Option(default=0, help="Limit the amount of runs to examine.")
 
 
+def get_flows_cache(config) -> flow_info.FlowInfo:
+    """Return a FlowInfo object for the given name."""
+    # if date is not None:
+    #     date = datetime.datetime.strptime(date, "%Y-%m-%d")
+    # else:
+    #     date = datetime.datetime.now()
+    return flows_cache.FlowsCache(config)
+
+
+def get_config():
+    # self.date = date or datetime.datetime.now()
+    date = datetime.datetime(year=2025, month=5, day=1)
+    cfg_filename = pathlib.Path(__file__).parent.parent / "beamlines.cfg"
+    log.info(f"Using CFG filename: {cfg_filename}")
+    config = configobj.ConfigObj(str(cfg_filename))
+
+    name = config["beamlines"]["current_app"]
+
+    if not config["beamlines"].get(name):
+        err = f'"{name}" is not configured in {cfg_filename}. Please add the following entry under [ "beamlines" ]\n\n'
+        err = f'{err}[\[ {name} ]]\n\tname = "{name}"\n\tclient_id = "<client_id>"\n'
+        raise ConfigException(err)
+
+    if not config["beamlines"].get("path"):
+        config["beamlines"]["path"] = pathlib.Path(__file__).parent.parent / "data"
+    basepath = config["beamlines"]["path"]
+    basepath.mkdir(exist_ok=True)
+    log.debug(f"Using data path: {basepath}")
+    return config
+
+
 @app.command()
-def summary(name: str = "xpcs"):
-    fc = flows_cache.FlowsCache(name)
-    items = ["name", "runs", "flows", "last_run", "run_logs_size", "cache_up_to_date"]
+def summary(refresh_cache_info: bool = False):
+    items = ["name", "date", "flows", "runs", "run_logs", "missing_logs"]
     table = Table(*items)
-    summary = fc.summary()
+    config = get_config()
 
-    summary["last_run"] = summary["last_run"].strftime("%A %d. %B %Y")
-    summary["runs"] = (
-        f"{summary['runs']} ({humanize.naturalsize(summary['runs_size'])})"
-    )
-    summary["flows"] = (
-        f"{summary['flows']} ({humanize.naturalsize(summary['flows_size'])})"
-    )
-    summary["run_logs_size"] = (
-        f"Runs log Cache: {humanize.naturalsize(summary['run_logs_size'])}"
-    )
-    summary["cache_up_to_date"] = str(summary["cache_up_to_date"])
-
-    table.add_row(*[summary[name] for name in items])
+    fc = get_flows_cache(config)
+    if refresh_cache_info:
+        fc.refresh_cache_info()
+    for month in fc.summary():
+        table.add_row(
+            month["name"],
+            month["year_month"],
+            str(month["flows"]),
+            f"{month['runs']} ({humanize.naturalsize(month['runs_file_size'])})",
+            f"{month['run_logs']} ({humanize.naturalsize(month['run_logs_file_size'])})",
+            f"{month['missing_logs']}",
+        )
     console.print(table)
 
 
 @app.command()
-def update(name: str = "xpcs", gui: bool = True):
-    fc = flows_cache.FlowsCache(name)
+def update(
+    gui: bool = True, flows: bool = False, runs: bool = False, logs: bool = False, workers: int = 3,
+):
+    fc = get_flows_cache(get_config())
+    fc.login()
+
+    flag = flows or runs or logs
+    if flag:
+        flows, runs, logs = flag and flows, flag and runs, flag and logs
+    else:
+        flows = runs = logs = True
 
     if gui is False:
-        console.print("Updating Flows")
-        fc.update_flows()
-        if fc.summary()["cache_up_to_date"] is False:
-            console.print("Updating Runs")
-            list(fc.update_runs())
-        console.print("Updating Run Logs")
-        fc.update_run_logs(lambda x, n: console.print(f"Updating runs {x}/{n}"))
+        if flows:
+            console.print("Updating Flows...")
+            fc.update_flows()
+        if runs:
+            console.print("Updating Runs...")
+            for current, total in fc.update_runs():
+                console.print(f"Fetching: ({current}/{total})")
+        if logs:
+            console.print("Updating Run Logs...")
+            for (
+                cache,
+                caches,
+                batch,
+                total_batches,
+                log_cache_progress,
+                total,
+            ) in fc.update_run_logs(
+                lambda x, n: console.print(f"Updating runs {x}/{n}"), workers=workers
+            ):
+                console.print(
+                    f"Updating Cache {cache} ({(caches.index(cache) + 1)}/{len(caches)}), Batch ({batch}/{total_batches}) Total Progress {log_cache_progress:.2f}%"
+                )
         return
 
     with Progress() as progress:
 
         flows_task = progress.add_task("[red]Downloading Flows...")
         runs_task = progress.add_task("[green]Downloading Runs...")
+        run_logs_cache = progress.add_task("[yellow]Updating Cache...")
         run_logs_task = progress.add_task("[cyan]Downloading Run Logs...")
 
-        fc.update_flows()
-        progress.update(flows_task, advance=100.0)
-        if fc.summary()["cache_up_to_date"] is False:
-            for runs_fetched in fc.update_runs():
+        if flows:
+            fc.update_flows()
+            progress.update(flows_task, advance=100.0)
+        if runs:
+            for completed, total in fc.update_runs():
                 progress.update(
                     runs_task,
-                    advance=1,
-                    description=f"[green]Downloading Runs...{runs_fetched}",
+                    completed=completed,
+                    total=total,
+                    description=f"[green]Downloading Runs...({completed}/{total})",
                 )
-        progress.update(runs_task, advance=100)
-        fc.update_run_logs(
-            lambda x, n: progress.update(
-                run_logs_task,
-                completed=x,
-                total=n,
-                description=f"[cyan]Downloading Run Logs...({x}/{n})",
-            )
-        )
+            # Set runs task to finished
+            progress.update(runs_task, completed=1, total=1)
+        if logs:
+            for (
+                cache,
+                caches,
+                batch,
+                total_batches,
+                log_cache_progress,
+                total,
+            ) in fc.update_run_logs(
+                lambda x, n: progress.update(
+                    run_logs_task,
+                    completed=x,
+                    total=n,
+                    description=f"[cyan]Downloading Run Logs...({x}/{n})",
+                ),
+                workers,
+            ):
+                progress.update(
+                    run_logs_cache,
+                    completed=log_cache_progress,
+                    total=total,
+                    description=f"[yellow]Updating Cache...({cache} [{(caches.index(cache) + 1)}/{len(caches)}] -- Batch {batch}/{total_batches})",
+                )
+
+
+@app.command()
+def plot_runs_over_time():
+    config = get_config()
+    fc = get_flows_cache(config)
+    datetimes = [
+        datetime.datetime.fromisoformat(r["start_time"]) for r in fc.get_runs()
+    ]
+    filename = plots.plot_runs_over_time(
+        datetimes, f'{config["beamlines"]["current_app"]}'
+    )
+    console.print(f"Plotted {len(datetimes)} runs and saved to {filename}")
 
 
 @app.command()
 def transfer_usage(
-    name: str = "xpcs",
     limit: int = TYPER_OP_LIMIT,
     filter_transfer_states: t.List[str] = None,
 ):
-    fi = flow_info.FlowInfo(name)
+    fi = flow_info.FlowInfo(get_flows_cache(get_config()))
     # Track progress through iterations of logs
     list(track(fi.load(limit=limit)))
     flow_logs = fi.get_flow_stats()
@@ -143,14 +230,13 @@ def transfer_usage(
 
 @app.command()
 def runtimes(
-    name: str = "xpcs",
     limit: int = TYPER_OP_LIMIT,
     compute_only: bool = False,
 ):
     """
     todo: Collect number of runs present in each step
     """
-    fi = flow_info.FlowInfo(name)
+    fi = flow_info.FlowInfo(get_flows_cache(get_config()))
     list(track(fi.load(limit=limit, step_times_compute_only=compute_only)))
     flow_logs = fi.get_flow_stats()
 
@@ -160,56 +246,56 @@ def runtimes(
         if "_step_time" in k and k != "total_step_time"
     ]
 
-    table = Table("Name", "Total Compute Time", "Average Compute Time")
+    table = Table(
+        "Name", "Total Compute Time", "Average Compute Time", "Min", "Max", "Corr Time"
+    )
     for state in t_states:
         btime = f"{state}_step_time"
         table.add_row(
             state,
             fmt_time(flow_logs[btime].sum()),
-            fmt_time(flow_logs[btime].mean()),
+            f"{flow_logs[btime].mean():.2f} seconds",
+            f"{flow_logs[btime].min():.2f} seconds",
+            f"{flow_logs[btime].max():.2f} seconds",
+            # f"{flow_logs['corr_execution_time'].max():.2f} seconds",
         )
     table.add_row(
         "Total",
         fmt_time(flow_logs["total_step_time"].sum()),
-        fmt_time(flow_logs["total_step_time"].mean()),
+        f"{flow_logs['total_step_time'].mean():.2f} seconds",
+        fmt_time(flow_logs["total_step_time"].min()),
+        fmt_time(flow_logs["total_step_time"].max()),
     )
     console.print(f"Collected metadata for {len(flow_logs)} runs.")
     console.print(table)
 
 
 @app.command()
-def histogram(
-    name: str = "xpcs",
-    limit: int = TYPER_OP_LIMIT,
-):
-    fi = flow_info.FlowInfo(name)
-    list(track(fi.load(limit=limit)))
-    plots.plot_histogram(fi.get_flow_stats())
+def plot_step_times():
+    config = get_config()
+    fi = flow_info.FlowInfo(get_flows_cache(config))
+    amount = len(list(track(fi.load())))
+
+    app = config["beamlines"]["current_app"]
+    filename = plots.plot_step_times(fi.get_flow_stats(), name=app)
+    console.print(f"Generated gantt with {amount} logs and saved to {filename}.")
 
 
 @app.command()
-def gantt(name: str = "xpcs"):
-    fi = flow_info.FlowInfo(name)
-    list(track(fi.load(limit=limit)))
-    plots.plot_gantt(flow_logs, fi.get_flow_stats())
+def plot_gantt():
+    config = get_config()
+    fi = flow_info.FlowInfo(get_flows_cache(config))
+    amount = len(list(track(fi.load())))
 
-
-@app.command()
-def plot_over_time(name: str = "xpcs"):
-    fi = flow_info.FlowInfo(name)
-    plots.plot_over_time(fi.extract_dates())
-
-
-@app.command()
-def update_logs(name: str = "xpcs"):
-    fc = flows_cache.FlowsCache(name)
-    for run in fc.runs:
-        console.log(f"Updating run logs for run id {run_id}")
-        fc.get_run_logs(run["run_id"])
+    app = config["beamlines"]["current_app"]
+    order = config["beamlines"][app]["flow_order"]
+    filename = plots.plot_gantt(fi.get_flow_stats(), order, name=app)
+    console.print(f"Generated gantt with {amount} logs and saved to {filename}.")
 
 
 @app.callback()
-def main(verbose: bool = False):
+def main(ctx: typer.Context, verbose: bool = False):
+
     level = logging.DEBUG if verbose else logging.WARNING
     # Log stuff in here
     logging.config.dictConfig(
@@ -234,5 +320,12 @@ def main(verbose: bool = False):
     )
 
 
+def main_cli():
+    try:
+        app()
+    except exc.ConfigException as e:
+        console.log(f"Config Error: {str(e)}")
+
+
 if __name__ == "__main__":
-    app()
+    main_cli()

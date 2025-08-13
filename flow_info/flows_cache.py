@@ -2,250 +2,172 @@ import datetime
 import json
 import os
 import pathlib
-import asyncio
 import configobj
 import logging
 import functools
 import globus_sdk
+from flow_info.exc import ConfigException
+from flow_info.runs_cache import RunsCache
+from flow_info.run_logs_cache import RunLogsCache
+from flow_info.data_manager import DataManager
 
 
 log = logging.getLogger(__name__)
 
 
 class FlowsCache:
+    def __init__(self, config: configobj.ConfigObj):
 
-    def __init__(self, name: str, date: datetime.datetime = None, cfg: str = None):
-        self.name = name
+        self.name = config["beamlines"]["current_app"]
+        self.config = config
+        if self.config is None:
+            raise ValueError("Config can't be none!")
+        self.app = self.get_client_app()
+        self.runs_cache = RunsCache(self.app, self.config)
+        self.run_logs_cache = RunLogsCache(self.app, self.config)
+        self.data_manager = DataManager(self.config)
 
-        if self.name is None:
-            raise ValueError("Flows Cache cannot be created with name=None")
+    def login(self):
+        self.app.login()
 
-        self.date = date or datetime.datetime.now()
-        self.cfg_filename = (
-            cfg or pathlib.Path(__file__).parent.parent / "beamlines.cfg"
-        )
-        log.debug(f"Using CFG filename: {self.cfg_filename}")
-        self.config = configobj.ConfigObj(str(self.cfg_filename))
+    def get_client_app(self):
+        app_name = f"FlowInfo-{self.name}"
 
-        self.basepath = (
-            self.cfg.get("path") or pathlib.Path(__file__).parent.parent / "data"
-        )
-        self.basepath.mkdir(exist_ok=True)
-        log.debug(f"Using data path: {self.basepath}")
+        if self.config["beamlines"][self.name].get("client_type") == "user":
+            client_id = self.config["beamlines"][self.name]["client_id"]
+            return globus_sdk.UserApp(app_name=app_name, client_id=client_id)
 
-    @property
-    def flows_list_filename(self):
-        return f"{self.cfg['name']}-flows-{self.date.year}-{self.date.month}.json"
-
-    @property
-    def runs_list_filename(self):
-        return f"{self.cfg['name']}-runs-{self.date.year}-{self.date.month}.json"
-
-    @property
-    def run_logs_filename(self):
-        return f"{self.cfg['name']}-run-logs-{self.date.year}-{self.date.month}.json"
-
-    @property
-    def cfg(self):
-        return self.config["beamlines"][self.name]
-
-    def get_flows_client(self):
         key = f"{self.name.upper()}_CLIENT_SECRET"
         secret = os.getenv(key)
         if not secret:
-            raise ValueError("Please set {key} to fetch data for client")
+            err = f'export {key}="<secret>"'
+            raise ConfigException(f"Please set {key} to fetch data for client")
 
         app = globus_sdk.ClientApp(
-            app_name=f"FlowInfo-{self.cfg.get('name', self.name)}",
-            client_id=self.cfg["client_id"],
+            app_name=app_name,
+            client_id=self.config["beamlines"][self.name]["client_id"],
             client_secret=secret,
         )
-        return globus_sdk.FlowsClient(app=app)
+        return app
 
-    @functools.cache
-    def _load_data(self, filename: str):
-        path = pathlib.Path(self.basepath) / filename
-        log.debug(f"Loading: {path}")
-        if not path.exists():
-            return []
-        with open(path) as f:
-            data = f.read()
-            if data:
-                return json.loads(data)
-            return None
+    def get_flows_client(self):
+        return globus_sdk.FlowsClient(app=self.get_client_app())
 
-    def _save_data(self, filename: str, data):
-        path = pathlib.Path(self.basepath) / filename
-        log.debug(f"Saving: {path}")
-        with open(path, "w") as f:
-            f.write(json.dumps(data, indent=2))
-        self._load_data.cache_clear()
+    def get_flows(self, year_month: str = None):
+        if not year_month:
+            year_month = self._get_year_month_now()
+        data = self.data_manager.load_flows(year_month)
+        return data.get("flows", [])
 
-    @property
-    def flows(self):
-        data = self._load_data(self.flows_list_filename)
-        if data:
-            return data["flows"]
-        return []
+    def get_runs(self, year_months: list = []):
+        if not year_months:
+            year_months = self.get_available_caches()
+        return self.runs_cache.get_runs(year_months)
 
-    @property
-    def runs(self):
-        data = self._load_data(self.runs_list_filename)
-        if data:
-            return data["runs"]
-        return []
+    def _to_year_month(self, timestamp):
+        dt = datetime.datetime.fromisoformat(timestamp)
+        return f"{dt.year}-{str(dt.month).zfill(2)}"
 
-    def sizeof(self, filename: str) -> int:
-        if os.path.exists(self.basepath / filename):
-            return os.stat(self.basepath / filename).st_size
-        return 0
+    def _get_year_month_now(self):
+        now = datetime.datetime.now()
+        return f"{now.year}-{str(now.month).zfill(2)}"
 
-    def get_run_logs(self, run_id: str):
-        run_logs = self._load_data(self.run_logs_filename) or {"logs": {}}
-        if run_id in run_logs["logs"]:
-            return run_logs["logs"][run_id]
+    def get_run_logs(self, runs: list, year_months: list = None):
+        if year_months is None:
+            year_months = sorted(
+                list({self._to_year_month(r["start_time"]) for r in runs})
+            )
+        log.debug(f"Fetching year months for runs: {year_months}")
+        for year_month in year_months:
+            yield from self.run_logs_cache.get_run_logs(runs, year_month)
 
     def get_flow(self, flow_id: str):
         log.debug(f"Looking up flow {flow_id}")
-        for flow in self.flows:
+        for flow in self.get_flows():
             if flow["flow_id"] == flow_id:
                 return flow
 
-    def update_runs(self, limit=0):
-        flows_client = self.get_flows_client()
+    def get_available_caches(self):
+        return sorted(self.data_manager.get_available_runs())
 
-        runs = list()
-        runs_collected = 0
-        for idx, run in enumerate(
-            flows_client.paginated.list_runs(
-                query_params={"orderby": ("completion_time DESC",)}
-            )
-        ):
-            runs += run.data["runs"]
-            if limit and runs_collected > limit:
-                break
-            runs_collected += len(run.data["runs"])
-            log.debug(f"Fetched {runs_collected} runs...")
-            yield runs_collected
-
-        # Save only run data, not other junk returned by flows
-        run_data = {"runs": runs}
-        log.info(f'Fetched {len(run_data["runs"])} runs from service.')
-        self._save_data(self.runs_list_filename, run_data)
+    def update_runs(self):
+        yield from self.runs_cache.update_runs()
 
     def update_flows(self, limit=0):
         flows_client = self.get_flows_client()
+        kwargs = {}
+        user_lookup = self.config["beamlines"][self.name]["client_type"] == "user"
+        if user_lookup:
+            kwargs["filter_role"] = "filter_viewer"
         flows = list(
-            flows_client.paginated.list_flows(
-                query_params={"orderby": ("created_at DESC",), "limit": 1},
-            ).items()
+            flows_client.paginated.list_flows(filter_role="flow_viewer").items()
         )
-
+        owner = self.config["beamlines"][self.name].get("flow_owner")
+        if owner:
+            last = len(flows)
+            flows = [f for f in flows if f["flow_owner"] == owner]
+            log.info(f"Filtered {last} user flows to {len(flows)}")
         flows = {"flows": flows}
         log.info(f'Fetched {len(flows["flows"])} Flows from service.')
-        self._save_data(self.flows_list_filename, flows)
+        self.data_manager.save_flows(self._get_year_month_now(), flows)
 
-    async def _update_single_run_log(
-        self,
-        worker_name: str,
-        flows_client: globus_sdk.FlowsClient,
-        queue,
-        run_logs: dict,
-    ):
-        log.debug(f"Worker {worker_name} started.")
-        while True:
-            run_id = await queue.get()
-            log.debug(f"Fetching new run {run_id}")
-            run_log = await asyncio.to_thread(
-                flows_client.get_run_logs, run_id, limit=100
-            )
-            run_logs["logs"][run_id] = run_log.data
+    def update_run_logs(self, callback, workers: int):
+        # Only update the last four months, the maximum duration we could see logs before they
+        # are deleted.
+        caches = sorted(self.get_available_caches())[-4:]
+        for cache_idx, cache in enumerate(caches):
+            log.debug(f"Fetching {cache} runs...")
+            runs = self.runs_cache.get_runs([cache])
+            for batch, num_batches in self.run_logs_cache.update_run_logs(
+                runs, cache, callback, workers
+            ):
+                # Get percentage of caches we've got through so far
+                cache_progress = (cache_idx) / len(caches) * 100
+                batch_progress = (batch) / num_batches * 100 / len(caches)
+                progress = cache_progress + batch_progress
+                total = 100
+                yield cache, caches, batch + 1, num_batches, progress, total
 
-            # Notify the queue that the "work item" has been processed.
-            queue.task_done()
-            log.debug("Success!")
-
-    async def _update_run_logs_loop(self, run_logs: dict, callback=None):
-        # Prep the queue
-        fetch_queue = asyncio.Queue()
-        for run in self.runs:
-            if run["run_id"] not in run_logs["logs"]:
-                fetch_queue.put_nowait(run["run_id"])
-
-        initial_size = fetch_queue.qsize()
-        flows_client = self.get_flows_client()
-        tasks = []
-        for i in range(3):
-            task = asyncio.create_task(
-                self._update_single_run_log(
-                    f"worker-{i}", flows_client, fetch_queue, run_logs
+    def refresh_cache_info(self):
+        for year_month in self.get_available_caches():
+            runs = list(self.get_runs([year_month]))
+            if year_month not in self.data_manager.cache_info[self.name]:
+                self.data_manager.cache_info[self.name][year_month] = {}
+            self.data_manager.cache_info[self.name][year_month]["runs"] = len(runs)
+            for bucket_num, _ in self.run_logs_cache.partition_buckets(runs):
+                logs = self.data_manager.load_run_logs(year_month, bucket_num).get(
+                    "logs", []
                 )
+                if "logs" not in self.data_manager.cache_info[self.name][year_month]:
+                    self.data_manager.cache_info[self.name][year_month]["logs"] = {}
+                self.data_manager.cache_info[self.name][year_month]["logs"][
+                    str(bucket_num)
+                ] = len(logs)
+            self.data_manager.save_cache_info()
+
+    def summary(self, year_months: list = None) -> list:
+
+        year_months = year_months or self.get_available_caches()
+        summaries = []
+
+        for year_month in year_months:
+            runs = self.data_manager.cache_info[self.name][year_month]["runs"]
+            logs = sum(
+                self.data_manager.cache_info[self.name][year_month]["logs"].values()
             )
-            tasks.append(task)
-
-        while not fetch_queue.empty():
-            if callback:
-                callback(initial_size - fetch_queue.qsize(), initial_size)
-            else:
-                log.debug(
-                    f"Working on queue ({initial_size - fetch_queue.qsize()}/{initial_size})"
-                )
-            await asyncio.sleep(1)
-        log.debug(f"Finishing remaining tasks...")
-
-        await fetch_queue.join()
-        callback(100, 100)
-
-        for task in tasks:
-            task.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
-        log.debug("Exciting...")
-
-    def update_run_logs(self, callback=None):
-
-        self._load_data.cache_clear()
-        run_logs = self._load_data(self.run_logs_filename) or {"logs": {}}
-
-        try:
-            asyncio.run(self._update_run_logs_loop(run_logs, callback))
-        except KeyboardInterrupt:
-            log.warning("Interrupt Received! Saving and exciting...")
-        finally:
-            self._save_data(self.run_logs_filename, run_logs)
-
-    def get_last_cached_run(self, runs):
-        if not runs:
-            return dict()
-        return sorted(runs, key=lambda x: x["completion_time"], reverse=True)[0]
-
-    def get_last_run(self):
-        flows_client = self.get_flows_client()
-
-        runs = flows_client.list_runs(
-            query_params={"orderby": ("completion_time DESC",), "limit": 1}
-        )
-        return runs.data["runs"][0]
-
-    def summary(self):
-
-        runs = self.runs
-        flows = self.flows
-
-        last_run = self.get_last_run()
-        last_cached_run = self.get_last_cached_run(runs)
-
-        lrt = last_run.get("completion_time", datetime.datetime.now().isoformat())
-        last_run_time = datetime.datetime.fromisoformat(lrt)
-
-        log.debug(f"Comparing: {lrt}, {last_cached_run.get('completion_time')}")
-
-        return {
-            "name": self.cfg["name"],
-            "last_run": last_run_time,
-            "runs": len(runs),
-            "flows": len(flows),
-            "runs_size": self.sizeof(self.runs_list_filename),
-            "flows_size": self.sizeof(self.flows_list_filename),
-            "run_logs_size": self.sizeof(self.run_logs_filename),
-            "cache_up_to_date": lrt == last_cached_run.get("completion_time"),
-        }
+            missing = runs - logs
+            summaries.append(
+                {
+                    "name": self.name,
+                    "year_month": year_month,
+                    "flows": len(self.get_flows(year_month)),
+                    "runs": runs,
+                    "run_logs": logs,
+                    "missing_logs": missing,
+                    "runs_file_size": self.data_manager.get_runs_file_size(year_month),
+                    "run_logs_file_size": self.data_manager.get_run_logs_file_size(
+                        year_month
+                    ),
+                }
+            )
+        return summaries
