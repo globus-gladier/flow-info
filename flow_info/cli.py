@@ -84,7 +84,11 @@ def summary(refresh_cache_info: bool = False):
 
 @app.command()
 def update(
-    gui: bool = True, flows: bool = False, runs: bool = False, logs: bool = False, workers: int = 3,
+    gui: bool = True,
+    flows: bool = False,
+    runs: bool = False,
+    logs: bool = False,
+    workers: int = 3,
 ):
     fc = get_flows_cache(get_config())
     fc.login()
