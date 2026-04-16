@@ -33,15 +33,21 @@ class FlowInfo:
         }
         log.debug(f"collected {len(self.flows)} flows.")
 
-    def load(self, limit=20, step_times_compute_only=False):
+    def load(self, run_range: list = [], step_times_compute_only=False, all_runs=False):
         """Load a flow's executions
 
         Args:
-            limit (int, optional): The number of flow actions to load. Defaults 100.
+            run_range (list, optional): A list of year-months to load runs for. Defaults to [] which will load the current month.
+            step_times_compute_only (bool, optional): Whether to only calculate step times for compute steps. Defaults to False.
+            all_runs (bool, optional): Whether to load all runs regardless of run_range. Defaults to False.
         """
-        runs = list(self.cache.get_runs([self.cache._get_year_month_now()]))
-        # runs = self.cache.runs[0:limit] if limit else self.cache.load_runs()
-        log.debug(f"Fetching metadata for {len(runs)} runs...")
+        if all_runs:
+            run_range = self.cache.get_available_caches()
+        else:
+            run_range = run_range or [self.cache._get_year_month_now()]
+        log.info(f"Loading runs for year-months: {run_range}")
+        runs = list(self.cache.get_runs(run_range))
+        log.info(f"Fetching metadata for {len(runs)} runs...")
         return self._extract_times(runs, step_times_compute_only)
 
     def get_missing_run_logs(self) -> t.Tuple[int, int]:

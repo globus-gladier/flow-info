@@ -29,6 +29,33 @@ def fmt_time(seconds_passed: int) -> str:
 
 TYPER_OP_LIMIT = typer.Option(default=0, help="Limit the amount of runs to examine.")
 
+def year_months_until_now(start_ym: str) -> list[str]:
+    """
+    Given a year-month string in 'YYYY-MM' format,
+    return a list of year-months from that point up to the current month.
+    """
+    try:
+        year, month = map(int, start_ym.split("-"))
+        current = datetime.date(year, month, 1)
+    except ValueError:
+        raise ValueError("Input must be in 'YYYY-MM' format")
+
+    today = datetime.date.today()
+    end = datetime.date(today.year, today.month, 1)
+
+    result = []
+
+    while current <= end:
+        result.append(f"{current.year:04d}-{current.month:02d}")
+
+        # increment month
+        if current.month == 12:
+            current = datetime.date(current.year + 1, 1, 1)
+        else:
+            current = datetime.date(current.year, current.month + 1, 1)
+
+    return result
+
 
 def get_flows_cache(config) -> flow_info.FlowInfo:
     """Return a FlowInfo object for the given name."""
@@ -180,12 +207,23 @@ def plot_runs_over_time():
 
 @app.command()
 def transfer_usage(
-    limit: int = TYPER_OP_LIMIT,
+    run_range = typer.Option(default="", help="The year-month range to examine, e.g. 2024-05"),
+    all_runs: bool = False,
     filter_transfer_states: t.List[str] = None,
 ):
+    if len(run_range.split("--")) == 2:
+        start, end = run_range.split("--")
+        run_range = year_months_until_now(start)
+        if end:
+            run_range = run_range[: run_range.index(end) + 1]
+    elif len(run_range.split("--")) == 1 and run_range:
+        run_range = [run_range]
+    else:
+        run_range = []
+
     fi = flow_info.FlowInfo(get_flows_cache(get_config()))
     # Track progress through iterations of logs
-    list(track(fi.load(limit=limit)))
+    list(track(fi.load(run_range=run_range, all_runs=all_runs)))
     flow_logs = fi.get_flow_stats()
 
     t_states = [
