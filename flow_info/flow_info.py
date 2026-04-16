@@ -164,6 +164,9 @@ class FlowInfo:
             if lg["code"] == "ActionStarted":
                 stats[state_name] = {"start": lg["time"]}
             elif lg["code"] == "ActionCompleted":
+                if state_name not in stats:
+                    log.debug(f"ActionCompleted for {state_name!r} without a prior ActionStarted; skipping.")
+                    continue
                 stats[state_name]["end"] = lg["time"]
 
             if state_name == "XpcsBoostCorr" and lg["code"] == "ActionCompleted":
