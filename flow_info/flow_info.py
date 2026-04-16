@@ -186,6 +186,7 @@ class FlowInfo:
                     - datetime.datetime.fromisoformat(vals["start"])
                 ).total_seconds()
                 for name, vals in stats.items()
+                if "start" in vals and "end" in vals
             }
         )
         step_times["total_step_time"] = sum(step_times.values())
