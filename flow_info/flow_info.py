@@ -170,11 +170,14 @@ class FlowInfo:
                 stats[state_name]["end"] = lg["time"]
 
             if state_name == "XpcsBoostCorr" and lg["code"] == "ActionCompleted":
-                ex_time = lg["details"]["output"]["XpcsBoostCorr"]["details"][
-                    "results"
-                ][0]["output"].get("execution_time_seconds", 0)
-                if ex_time:
-                    step_times["corr_execution_time"] = ex_time
+                try:
+                    ex_time = lg["details"]["output"]["XpcsBoostCorr"]["details"][
+                        "results"
+                    ][0]["output"].get("execution_time_seconds", 0)
+                    if ex_time:
+                        step_times["corr_execution_time"] = ex_time
+                except AttributeError:
+                    log.error(f"Could not find execution time for XpcsBoostCorr step in log entry. ")
         
         step_times.update(
             {
