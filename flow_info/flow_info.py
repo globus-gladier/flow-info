@@ -106,6 +106,7 @@ class FlowInfo:
             Dict: A dict of step name to bytes transferred
         """
         self.missing_run_logs = 0
+        processed_logs = 0
         all_res = pd.DataFrame()
 
         for flow_run, flow_logs in zip(flow_runs, self.cache.get_run_logs(flow_runs)):
@@ -137,10 +138,11 @@ class FlowInfo:
 
             # Yield the current progress. The number of iterated runs is significant, so this is nice to track progress
             yield
+            processed_logs += 1
         if len(all_res) > 0:
             all_res = all_res.sort_values(by=['start'])
             all_res = all_res.reset_index(drop=True)
-        log.debug("Done!")
+        log.info(f"Processed {processed_logs}/{len(flow_runs)} run logs.")
         self.flow_stats = all_res
 
 
