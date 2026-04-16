@@ -77,6 +77,8 @@ class FlowInfo:
         :param filter_state_names: Names that will match this state.
         :param filter_code: Status code to filter log entries by. Common ones are ActionStarted, ActionCompleted
         """
+        if not run_log:
+            return []
         return [
             e for e in run_log['entries'] if
             e["code"] in filter_codes and
