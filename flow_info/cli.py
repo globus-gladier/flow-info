@@ -294,9 +294,15 @@ def plot_gantt():
 
 
 @app.callback()
-def main(ctx: typer.Context, verbose: bool = False):
+def main(ctx: typer.Context, verbose: bool = False, log_level: str = "WARNING"):
 
-    level = logging.DEBUG if verbose else logging.WARNING
+    if log_level not in ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]:
+        console.print(
+            f"Invalid log level: {log_level}. Must be one of DEBUG, INFO, WARNING, ERROR, CRITICAL."
+        )
+        raise typer.Exit(code=1)
+    if verbose:
+        log_level = "DEBUG"
     # Log stuff in here
     logging.config.dictConfig(
         {
@@ -309,7 +315,7 @@ def main(ctx: typer.Context, verbose: bool = False):
             "handlers": {
                 "console": {
                     "class": "rich.logging.RichHandler",
-                    "level": level,
+                    "level": log_level,
                     "console": console,
                 }
             },
