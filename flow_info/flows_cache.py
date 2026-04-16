@@ -79,7 +79,8 @@ class FlowsCache:
             )
         log.debug(f"Fetching year months for runs: {year_months}")
         for year_month in year_months:
-            yield from self.run_logs_cache.get_run_logs(runs, year_month)
+            month_runs = [r for r in runs if self._to_year_month(r["start_time"]) == year_month]
+            yield from self.run_logs_cache.get_run_logs(month_runs, year_month)
 
     def get_flow(self, flow_id: str):
         log.debug(f"Looking up flow {flow_id}")
