@@ -15,10 +15,10 @@ class RunLogsCache:
 
     BUCKET_SIZE = 2500
 
-    def __init__(self, app: globus_sdk.GlobusApp, config):
+    def __init__(self, app: globus_sdk.GlobusApp, config, data_manager=None):
         self.app = app
         self.flows_client = globus_sdk.FlowsClient(app=self.app)
-        self.data_manager = DataManager(config)
+        self.data_manager = data_manager or DataManager(config)
 
     def get_run_logs(self, runs, year_month: str):
         """

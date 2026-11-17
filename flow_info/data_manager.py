@@ -48,9 +48,9 @@ class DataManager:
         self.save_data(self.get_filename(self.FLOWS_FILENAME, year_month), data)
 
     def save_runs(self, year_month: str, data: dict):
-        if not self.cache_info["xpcs"].get(year_month):
-            self.cache_info["xpcs"][year_month] = {}
-        self.cache_info["xpcs"][year_month]["runs"] = len(data["runs"])
+        if not self.cache_info[self.name].get(year_month):
+            self.cache_info[self.name][year_month] = {}
+        self.cache_info[self.name][year_month]["runs"] = len(data["runs"])
         self.save_cache_info()
         self.save_data(self.get_filename(self.RUNS_FILENAME, year_month), data)
 
@@ -58,11 +58,11 @@ class DataManager:
         if not data.get("logs"):
             # Don't save empty log files
             return
-        if not self.cache_info["xpcs"].get(year_month):
-            self.cache_info["xpcs"][year_month] = {}
-        if not self.cache_info["xpcs"][year_month].get("logs"):
-            self.cache_info["xpcs"][year_month]["logs"] = {}
-        self.cache_info["xpcs"][year_month]["logs"][str(batch)] = len(data.get("logs", []))
+        if not self.cache_info[self.name].get(year_month):
+            self.cache_info[self.name][year_month] = {}
+        if not self.cache_info[self.name][year_month].get("logs"):
+            self.cache_info[self.name][year_month]["logs"] = {}
+        self.cache_info[self.name][year_month]["logs"][str(batch)] = len(data.get("logs", []))
         self.save_cache_info()
         self.save_data(
             self.get_filename(self.RUN_LOGS_FILENAME, year_month, batch=batch), data

@@ -11,10 +11,10 @@ MAX_SEARCH_LIMIT = 10000
 
 
 class RunsCache:
-    def __init__(self, app: globus_sdk.GlobusApp, config):
+    def __init__(self, app: globus_sdk.GlobusApp, config, data_manager=None):
         self.app = app
         self.search_client = globus_sdk.SearchClient(app=self.app)
-        self.data_manager = DataManager(config)
+        self.data_manager = data_manager or DataManager(config)
         self.base_filters = []
         # self.config = config
         name = config["beamlines"]["current_app"]

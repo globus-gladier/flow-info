@@ -23,9 +23,11 @@ class FlowsCache:
         if self.config is None:
             raise ValueError("Config can't be none!")
         self.app = self.get_client_app()
-        self.runs_cache = RunsCache(self.app, self.config)
-        self.run_logs_cache = RunLogsCache(self.app, self.config)
+        # Share one DataManager so every cache updates the same cache_info, rather than
+        # each holding a stale copy and overwriting the others' counts on save.
         self.data_manager = DataManager(self.config)
+        self.runs_cache = RunsCache(self.app, self.config, self.data_manager)
+        self.run_logs_cache = RunLogsCache(self.app, self.config, self.data_manager)
 
     def login(self):
         self.app.login()
@@ -152,10 +154,9 @@ class FlowsCache:
         summaries = []
 
         for year_month in year_months:
-            runs = self.data_manager.cache_info[self.name][year_month]["runs"]
-            logs = sum(
-                self.data_manager.cache_info[self.name][year_month]["logs"].values()
-            )
+            info = self.data_manager.cache_info[self.name].get(year_month, {})
+            runs = info.get("runs", 0)
+            logs = sum(info.get("logs", {}).values())
             missing = runs - logs
             summaries.append(
                 {
