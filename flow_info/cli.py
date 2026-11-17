@@ -28,6 +28,21 @@ def fmt_time(seconds_passed: int) -> str:
 
 
 TYPER_OP_LIMIT = typer.Option(default=0, help="Limit the amount of runs to examine.")
+TYPER_OP_RUN_RANGE = typer.Option(default="", help="The year-month range to examine, e.g. 2024-05 or 2024-05--2024-08")
+TYPER_OP_ALL_RUNS = typer.Option(default=False, help="Load all runs regardless of date range.")
+
+def parse_run_range(run_range: str) -> list[str]:
+    """Parse a run_range option string into a list of year-month strings."""
+    if len(run_range.split("--")) == 2:
+        start, end = run_range.split("--")
+        result = year_months_until_now(start)
+        if end:
+            result = result[: result.index(end) + 1]
+        return result
+    elif run_range:
+        return [run_range]
+    return []
+
 
 def year_months_until_now(start_ym: str) -> list[str]:
     """
@@ -207,19 +222,11 @@ def plot_runs_over_time():
 
 @app.command()
 def transfer_usage(
-    run_range = typer.Option(default="", help="The year-month range to examine, e.g. 2024-05"),
-    all_runs: bool = False,
+    run_range: str = TYPER_OP_RUN_RANGE,
+    all_runs: bool = TYPER_OP_ALL_RUNS,
     filter_transfer_states: t.List[str] = None,
 ):
-    if len(run_range.split("--")) == 2:
-        start, end = run_range.split("--")
-        run_range = year_months_until_now(start)
-        if end:
-            run_range = run_range[: run_range.index(end) + 1]
-    elif len(run_range.split("--")) == 1 and run_range:
-        run_range = [run_range]
-    else:
-        run_range = []
+    run_range = parse_run_range(run_range)
 
     fi = flow_info.FlowInfo(get_flows_cache(get_config()))
     # Track progress through iterations of logs
@@ -268,14 +275,15 @@ def transfer_usage(
 
 @app.command()
 def runtimes(
-    limit: int = TYPER_OP_LIMIT,
+    run_range: str = TYPER_OP_RUN_RANGE,
+    all_runs: bool = TYPER_OP_ALL_RUNS,
     compute_only: bool = False,
 ):
     """
     todo: Collect number of runs present in each step
     """
     fi = flow_info.FlowInfo(get_flows_cache(get_config()))
-    list(track(fi.load(limit=limit, step_times_compute_only=compute_only)))
+    list(track(fi.load(run_range=parse_run_range(run_range), all_runs=all_runs, step_times_compute_only=compute_only)))
     flow_logs = fi.get_flow_stats()
 
     t_states = [
@@ -309,10 +317,13 @@ def runtimes(
 
 
 @app.command()
-def plot_step_times():
+def plot_step_times(
+    run_range: str = TYPER_OP_RUN_RANGE,
+    all_runs: bool = TYPER_OP_ALL_RUNS,
+):
     config = get_config()
     fi = flow_info.FlowInfo(get_flows_cache(config))
-    amount = len(list(track(fi.load())))
+    amount = len(list(track(fi.load(run_range=parse_run_range(run_range), all_runs=all_runs))))
 
     app = config["beamlines"]["current_app"]
     filename = plots.plot_step_times(fi.get_flow_stats(), name=app)
@@ -320,10 +331,13 @@ def plot_step_times():
 
 
 @app.command()
-def plot_gantt():
+def plot_gantt(
+    run_range: str = TYPER_OP_RUN_RANGE,
+    all_runs: bool = TYPER_OP_ALL_RUNS,
+):
     config = get_config()
     fi = flow_info.FlowInfo(get_flows_cache(config))
-    amount = len(list(track(fi.load())))
+    amount = len(list(track(fi.load(run_range=parse_run_range(run_range), all_runs=all_runs))))
 
     app = config["beamlines"]["current_app"]
     order = config["beamlines"][app]["flow_order"]
