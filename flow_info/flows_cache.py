@@ -6,10 +6,12 @@ import configobj
 import logging
 import functools
 import globus_sdk
+import flow_info
 from flow_info.exc import ConfigException
 from flow_info.runs_cache import RunsCache
 from flow_info.run_logs_cache import RunLogsCache
 from flow_info.data_manager import DataManager
+from flow_info.uploader import Uploader
 
 
 log = logging.getLogger(__name__)
@@ -32,25 +34,59 @@ class FlowsCache:
     def login(self):
         self.app.login()
 
-    def get_client_app(self):
-        app_name = f"FlowInfo-{self.name}"
+    def get_client_app(
+        self,
+        client_type: str = None,
+        client_id: str = None,
+        app_name: str = None,
+    ):
+        beamline = self.config["beamlines"][self.name]
+        client_type = client_type or beamline.get("client_type")
+        client_id = client_id or beamline["client_id"]
+        app_name = app_name or f"FlowInfo-{self.name}"
 
-        if self.config["beamlines"][self.name].get("client_type") == "user":
-            client_id = self.config["beamlines"][self.name]["client_id"]
+        if client_type == "user":
             return globus_sdk.UserApp(app_name=app_name, client_id=client_id)
 
         key = f"{self.name.upper()}_CLIENT_SECRET"
         secret = os.getenv(key)
         if not secret:
-            err = f'export {key}="<secret>"'
-            raise ConfigException(f"Please set {key} to fetch data for client")
+            raise ConfigException(f'Please set {key} to fetch data for client: export {key}="<secret>"')
 
         app = globus_sdk.ClientApp(
             app_name=app_name,
-            client_id=self.config["beamlines"][self.name]["client_id"],
+            client_id=client_id,
             client_secret=secret,
         )
         return app
+
+    def get_upload_app(self):
+        """The app used for uploads, set by remote_client_type.
+
+        It defaults to the beamline's client_type, in which case the main app (and its
+        login) is reused. A user upload for a client-credentials beamline logs in with
+        the built-in flow-info client.
+        """
+        beamline = self.config["beamlines"][self.name]
+        client_type = beamline.get("remote_client_type", beamline.get("client_type"))
+        if client_type not in ("user", "client-credentials"):
+            raise ConfigException(
+                f'remote_client_type must be "user" or "client-credentials", got {client_type!r}'
+            )
+        if client_type == beamline.get("client_type"):
+            return self.app
+        if client_type == "client-credentials":
+            # The beamline's client_id is a native client, which can't do client credentials.
+            raise ConfigException(
+                f'remote_client_type = "client-credentials" needs a client-credentials '
+                f'beamline, but [[ {self.name} ]] uses client_type = "user"'
+            )
+        return self.get_client_app(
+            client_type="user",
+            client_id=flow_info.CLIENT_ID,
+            # A separate name keeps its tokens apart from the main app's.
+            app_name=f"FlowInfo-{self.name}-upload",
+        )
 
     def get_flows_client(self):
         return globus_sdk.FlowsClient(app=self.get_client_app())
@@ -95,6 +131,24 @@ class FlowsCache:
 
     def update_runs(self):
         yield from self.runs_cache.update_runs()
+
+    def get_uploader(self) -> Uploader:
+        """Create an Uploader for the configured remote_collection. Call before login()."""
+        remote_collection = self.config["beamlines"][self.name].get("remote_collection")
+        if not remote_collection:
+            raise ConfigException(
+                f'Set remote_collection = "globus://<collection_id>/<path>/" '
+                f'under [[ {self.name} ]] to use flow-info upload'
+            )
+        beamline = self.config["beamlines"][self.name]
+        return Uploader(
+            self.get_upload_app(),
+            remote_collection,
+            local_collection=beamline.get("local_collection"),
+            remote_data_access=beamline.as_bool("remote_data_access")
+            if "remote_data_access" in beamline
+            else False,
+        )
 
     def update_flows(self, limit=0):
         flows_client = self.get_flows_client()

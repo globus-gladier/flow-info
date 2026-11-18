@@ -124,6 +124,53 @@ def summary(refresh_cache_info: bool = False):
     console.print(table)
 
 
+UPLOAD_LIST_LIMIT = 50
+
+
+def upload_data(fc: flows_cache.FlowsCache, uploader, assume_yes: bool = False):
+    """Show what a sync of the data folder will send, then submit it without waiting."""
+    data_dir = fc.data_manager.basepath
+    console.print(f"Comparing {data_dir} with the remote collection...")
+    plan = uploader.plan_sync(data_dir)
+
+    destination = uploader.get_collection_name(uploader.collection_id)
+    stats = Table("", "", show_header=False, box=None)
+    stats.add_row("Destination", f"{destination} ({uploader.collection_id})")
+    stats.add_row("Path", uploader.base_path)
+    stats.add_row("Local files", str(plan.local_files))
+    stats.add_row(
+        "Not synced",
+        f"{len(plan.pending)} files ({humanize.naturalsize(plan.pending_size)})",
+    )
+    if plan.remote_only:
+        stats.add_row("Remote only", f"{len(plan.remote_only)} files (left untouched)")
+    console.print(stats)
+
+    if not plan.pending:
+        console.print("Remote collection is up to date, nothing to upload.")
+        return
+
+    table = Table("File", "Size", "Reason")
+    for item in plan.pending[:UPLOAD_LIST_LIMIT]:
+        table.add_row(
+            str(item.path.relative_to(data_dir)),
+            humanize.naturalsize(item.size),
+            item.reason,
+        )
+    if len(plan.pending) > UPLOAD_LIST_LIMIT:
+        table.add_row(f"... and {len(plan.pending) - UPLOAD_LIST_LIMIT} more", "", "")
+    console.print(table)
+
+    if not assume_yes and not typer.confirm(
+        f"Upload {len(plan.pending)} files ({humanize.naturalsize(plan.pending_size)}) "
+        f"to {destination}?"
+    ):
+        console.print("Upload cancelled.")
+        return
+
+    task_id = uploader.submit(data_dir, label=f"flow-info upload {fc.name}")
+    console.print(f"Submitted transfer task {task_id}, follow it at {uploader.task_url(task_id)}")
+
 @app.command()
 def update(
     gui: bool = True, flows: bool = False, runs: bool = False, logs: bool = False, workers: int = 3,
@@ -205,6 +252,20 @@ def update(
                     total=total,
                     description=f"[yellow]Updating Cache...({cache} [{(caches.index(cache) + 1)}/{len(caches)}] -- Batch {batch}/{total_batches})",
                 )
+
+
+@app.command()
+def upload(
+    yes: bool = typer.Option(
+        False, "--yes", "-y", help="Start the transfer without asking for confirmation."
+    ),
+):
+    """Sync the data folder to the configured remote_collection with Globus Transfer."""
+    fc = get_flows_cache(get_config())
+    # The uploader registers its scopes on the app, so it must exist before login.
+    uploader = fc.get_uploader()
+    uploader.login()
+    upload_data(fc, uploader, assume_yes=yes)
 
 
 @app.command()
