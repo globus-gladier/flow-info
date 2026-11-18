@@ -173,16 +173,14 @@ def upload_data(fc: flows_cache.FlowsCache, uploader, assume_yes: bool = False):
 
 @app.command()
 def update(
-    gui: bool = True, flows: bool = False, runs: bool = False, logs: bool = False, workers: int = 3,
+    gui: bool = True,
+    flows: bool = typer.Option(True, help="Update flows. --no-flows skips them."),
+    runs: bool = typer.Option(True, help="Update runs. --no-runs skips them."),
+    logs: bool = typer.Option(True, help="Update run logs. --no-logs skips them."),
+    workers: int = 3,
 ):
     fc = get_flows_cache(get_config())
     fc.login()
-
-    flag = flows or runs or logs
-    if flag:
-        flows, runs, logs = flag and flows, flag and runs, flag and logs
-    else:
-        flows = runs = logs = True
 
     if gui is False:
         if flows:
