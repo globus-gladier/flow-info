@@ -113,7 +113,9 @@ class FlowInfo:
         """
         self.missing_run_logs = 0
         processed_logs = 0
-        all_res = pd.DataFrame()
+        # One dict per run, turned into a DataFrame once at the end. Appending a row at
+        # a time with pd.concat copies the whole frame every run.
+        rows = []
 
         for flow_run, flow_logs in zip(flow_runs, self.cache.get_run_logs(flow_runs)):
             flow_log_id, flow_log = flow_logs
@@ -138,13 +140,12 @@ class FlowInfo:
             filter_names = self.filter_ap_states_compute(flow_run["flow_id"]) if step_times_compute_only else []
             flow_res.update(self.extract_step_times(flow_log, filter_state_names=filter_names))
 
-            # Combine dataframes
-            flowdf = pd.DataFrame([flow_res])
-            all_res = pd.concat([all_res, flowdf], ignore_index=True)
+            rows.append(flow_res)
 
             # Yield the current progress. The number of iterated runs is significant, so this is nice to track progress
             yield
             processed_logs += 1
+        all_res = pd.DataFrame(rows)
         if len(all_res) > 0:
             all_res = all_res.sort_values(by=['start'])
             all_res = all_res.reset_index(drop=True)
