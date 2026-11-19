@@ -25,8 +25,8 @@ class RunsCache:
             )
 
     def get_runs(self, year_months: list = None):
-        for year_month in year_months or self.data_manager.get_available_year_months():
-            yield from self.data_manager.load_runs(year_month).get("runs", [])
+        for year_month in year_months or self.data_manager.get_available_runs():
+            yield from self.data_manager.iter_runs(year_month)
 
     def get_date_interval(self, date_str):
         """
@@ -139,9 +139,9 @@ class RunsCache:
     def get_incomplete_buckets(self):
         incomplete_buckets = []
         for bucket in self.get_buckets_by_date():
-            saved_runs = self.data_manager.load_runs(bucket["value"]) or {"runs": []}
-            log.info(f"{bucket['value']}: {len(saved_runs['runs'])}/{bucket['count']}.")
-            if len(saved_runs["runs"]) < bucket["count"]:
+            saved_runs = self.data_manager.count_runs(bucket["value"])
+            log.info(f"{bucket['value']}: {saved_runs}/{bucket['count']}.")
+            if saved_runs < bucket["count"]:
                 if bucket["count"] > MAX_SEARCH_LIMIT:
                     log.debug(
                         f"LARGE BUCKET DETECTED ({bucket['count']} for {bucket['value']}), FETCHING..."
@@ -173,21 +173,33 @@ class RunsCache:
                     incomplete_buckets.append(
                         {
                             "value": bucket["value"],
-                            "current": len(saved_runs),
+                            # The whole month is fetched again, so progress starts at 0.
+                            "current": 0,
                             "count": bucket["count"],
                         }
                     )
         return incomplete_buckets
 
+    @staticmethod
+    def bucket_year_month(bucket_value: str) -> str:
+        """The year-month of a bucket value like 2025-07, 2025-07-01 or 2025-07-01 18:00:00."""
+        year, month = bucket_value.split(" ")[0].split("-")[:2]
+        return f"{year}-{month}"
+
     def update_runs(self):
         buckets = self.get_incomplete_buckets()
+        # Fail before fetching anything if a month needs migrating first.
+        self.data_manager.require_migrated(
+            {self.bucket_year_month(b["value"]) for b in buckets}
+        )
         total = sum([b["count"] for b in buckets])
         current = sum([b["current"] for b in buckets])
         yield current, total
 
-        # Fetch a new batch of runs from Globus Search.
-        current_run_batch = None
-        run_data = {"runs": []}
+        if not buckets:
+            log.debug("No runs to fetch, all done!")
+            return
+
         for bucket in buckets:
             log.debug(f"Fetching {bucket['value']}: count {bucket['count']}")
             request = {
@@ -197,32 +209,14 @@ class RunsCache:
                 "sort": [{"field_name": "start_time", "order": "asc"}],
                 "filters": self.base_filters + self.get_date_filters(bucket["value"]),
             }
-
-            # Check the buckets for a date change. If the month has clicked over, we want
-            # to save the current batch of runs and start on the next one.
-            date_val = bucket["value"].split(" ")[0].split("-")
-            year_month_batch_key = f"{date_val[0]}-{date_val[1]}"
-            if current_run_batch is None:
-                current_run_batch = year_month_batch_key
-            elif current_run_batch != year_month_batch_key:
-                log.info(
-                    f"Checkpoint Reached! Saving {len(run_data['runs'])} for {current_run_batch}..."
-                )
-                self.data_manager.save_runs(current_run_batch, run_data)
-                run_data = {"runs": []}
-                current_run_batch = year_month_batch_key
-
-            # Add the latest batch of runs from lobus Search
+            year_month = self.bucket_year_month(bucket["value"])
+            # Save each page as it arrives, so memory doesn't grow with the month.
             for result in self.search_client.paginated.post_search(
                 "2a318659-a547-4b48-a0fc-e0c19081a960", request
             ):
                 runs = [e["entries"][0]["content"] for e in result["gmeta"]]
-                run_data["runs"] += runs
+                self.data_manager.save_runs(year_month, runs)
                 current += len(runs)
                 yield current, total
 
-        if current_run_batch is None:
-            log.debug("No runs to fetch, all done!")
-        else:
-            self.data_manager.save_runs(current_run_batch, run_data)
-            log.info(f"Completed {current}/{total}. All info saved.")
+        log.info(f"Completed {current}/{total}. All info saved.")

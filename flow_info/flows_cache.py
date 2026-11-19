@@ -25,8 +25,7 @@ class FlowsCache:
         if self.config is None:
             raise ValueError("Config can't be none!")
         self.app = self.get_client_app()
-        # Share one DataManager so every cache updates the same cache_info, rather than
-        # each holding a stale copy and overwriting the others' counts on save.
+        # Share one DataManager, so each month's database is only opened once.
         self.data_manager = DataManager(self.config)
         self.runs_cache = RunsCache(self.app, self.config, self.data_manager)
         self.run_logs_cache = RunLogsCache(self.app, self.config, self.data_manager)
@@ -94,8 +93,7 @@ class FlowsCache:
     def get_flows(self, year_month: str = None):
         if not year_month:
             year_month = self._get_year_month_now()
-        data = self.data_manager.load_flows(year_month)
-        return data.get("flows", [])
+        return self.data_manager.load_flows(year_month)
 
     def get_runs(self, year_months: list = []):
         if not year_months:
@@ -164,66 +162,59 @@ class FlowsCache:
             last = len(flows)
             flows = [f for f in flows if f["flow_owner"] == owner]
             log.info(f"Filtered {last} user flows to {len(flows)}")
-        flows = {"flows": flows}
-        log.info(f'Fetched {len(flows["flows"])} Flows from service.')
+        log.info(f"Fetched {len(flows)} Flows from service.")
         self.data_manager.save_flows(self._get_year_month_now(), flows)
 
+    def get_log_update_months(self) -> list:
+        """Months that can still have run logs to fetch. Logs are deleted 90 days after
+        a run starts, so this is at most the last four months."""
+        cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=90)
+        months = []
+        for year_month in self.get_available_caches():
+            year, month = map(int, year_month.split("-"))
+            next_month = datetime.datetime(
+                year + month // 12, month % 12 + 1, 1, tzinfo=datetime.timezone.utc
+            )
+            if next_month > cutoff:
+                months.append(year_month)
+        return months
+
     def update_run_logs(self, callback, workers: int):
-        # Only update the last four months, the maximum duration we could see logs before they
-        # are deleted.
-        caches = sorted(self.get_available_caches())[-4:]
+        caches = self.get_log_update_months()
+        # Fail before fetching anything if a month needs migrating first.
+        self.data_manager.require_migrated(caches)
         for cache_idx, cache in enumerate(caches):
-            log.debug(f"Fetching {cache} runs...")
-            runs = self.runs_cache.get_runs([cache])
+            log.debug(f"Fetching {cache} run logs...")
             for batch, num_batches in self.run_logs_cache.update_run_logs(
-                runs, cache, callback, workers
+                cache, callback, workers
             ):
                 # Get percentage of caches we've got through so far
                 cache_progress = (cache_idx) / len(caches) * 100
                 batch_progress = (batch) / num_batches * 100 / len(caches)
                 progress = cache_progress + batch_progress
                 total = 100
-                yield cache, caches, batch + 1, num_batches, progress, total
+                yield cache, caches, batch, num_batches, progress, total
 
-    def refresh_cache_info(self):
-        for year_month in self.get_available_caches():
-            runs = list(self.get_runs([year_month]))
-            if year_month not in self.data_manager.cache_info[self.name]:
-                self.data_manager.cache_info[self.name][year_month] = {}
-            self.data_manager.cache_info[self.name][year_month]["runs"] = len(runs)
-            for bucket_num, _ in self.run_logs_cache.partition_buckets(runs):
-                logs = self.data_manager.load_run_logs(year_month, bucket_num).get(
-                    "logs", []
-                )
-                if "logs" not in self.data_manager.cache_info[self.name][year_month]:
-                    self.data_manager.cache_info[self.name][year_month]["logs"] = {}
-                self.data_manager.cache_info[self.name][year_month]["logs"][
-                    str(bucket_num)
-                ] = len(logs)
-            self.data_manager.save_cache_info()
+    def _storage(self, year_month: str) -> str:
+        if self.data_manager.is_legacy(year_month):
+            return "json"
+        if self.data_manager.has_legacy_flows(year_month):
+            # Migrated before flows were stored in the database.
+            return "sqlite, json flows"
+        return "sqlite"
 
     def summary(self, year_months: list = None) -> list:
-
-        year_months = year_months or self.get_available_caches()
-        summaries = []
-
-        for year_month in year_months:
-            info = self.data_manager.cache_info[self.name].get(year_month, {})
-            runs = info.get("runs", 0)
-            logs = sum(info.get("logs", {}).values())
-            missing = runs - logs
-            summaries.append(
-                {
-                    "name": self.name,
-                    "year_month": year_month,
-                    "flows": len(self.get_flows(year_month)),
-                    "runs": runs,
-                    "run_logs": logs,
-                    "missing_logs": missing,
-                    "runs_file_size": self.data_manager.get_runs_file_size(year_month),
-                    "run_logs_file_size": self.data_manager.get_run_logs_file_size(
-                        year_month
-                    ),
-                }
-            )
-        return summaries
+        dm = self.data_manager
+        return [
+            {
+                "name": self.name,
+                "year_month": year_month,
+                "flows": len(self.get_flows(year_month)),
+                "runs": dm.count_runs(year_month),
+                "run_logs": dm.count_run_logs(year_month),
+                "missing_logs": dm.count_missing_logs(year_month),
+                "size": dm.get_month_size(year_month),
+                "storage": self._storage(year_month),
+            }
+            for year_month in year_months or self.get_available_caches()
+        ]

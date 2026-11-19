@@ -14,7 +14,8 @@ from rich.table import Table
 from rich.progress import track
 from rich.table import Column
 from rich.progress import Progress, BarColumn, TextColumn
-from flow_info import plots, flow_info, flows_cache, exc
+from flow_info import plots, flow_info, flows_cache, exc, migration
+from flow_info import data_manager as data_manager_module
 
 log = logging.getLogger(__name__)
 app = typer.Typer(no_args_is_help=True, pretty_exceptions_enable=False)
@@ -81,47 +82,124 @@ def get_flows_cache(config) -> flow_info.FlowInfo:
     return flows_cache.FlowsCache(config)
 
 
+def find_config_file() -> pathlib.Path:
+    """Find beamlines.cfg: $FLOW_INFO_CONFIG, then the working directory, then the
+    source checkout (which only exists for editable installs)."""
+    candidates = []
+    if os.getenv("FLOW_INFO_CONFIG"):
+        candidates.append(pathlib.Path(os.environ["FLOW_INFO_CONFIG"]))
+    candidates += [
+        pathlib.Path.cwd() / "beamlines.cfg",
+        pathlib.Path(__file__).parent.parent / "beamlines.cfg",
+    ]
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    tried = "\n".join(f"  {c}" for c in candidates)
+    raise exc.ConfigException(
+        f"Could not find beamlines.cfg. Run flow-info from the directory containing it, "
+        f"or set FLOW_INFO_CONFIG to its path. Looked in:\n{tried}"
+    )
+
+
 def get_config():
-    # self.date = date or datetime.datetime.now()
-    date = datetime.datetime(year=2025, month=5, day=1)
-    cfg_filename = pathlib.Path(__file__).parent.parent / "beamlines.cfg"
+    cfg_filename = find_config_file()
     log.info(f"Using CFG filename: {cfg_filename}")
     config = configobj.ConfigObj(str(cfg_filename))
 
+    if "beamlines" not in config or "current_app" not in config["beamlines"]:
+        raise exc.ConfigException(
+            f'{cfg_filename} needs a [ "beamlines" ] section with current_app set'
+        )
     name = config["beamlines"]["current_app"]
 
     if not config["beamlines"].get(name):
         err = f'"{name}" is not configured in {cfg_filename}. Please add the following entry under [ "beamlines" ]\n\n'
-        err = f'{err}[\[ {name} ]]\n\tname = "{name}"\n\tclient_id = "<client_id>"\n'
-        raise ConfigException(err)
+        err = f'{err}[[ {name} ]]\n\tname = "{name}"\n\tclient_id = "<client_id>"\n'
+        raise exc.ConfigException(err)
 
-    if not config["beamlines"].get("path"):
-        config["beamlines"]["path"] = pathlib.Path(__file__).parent.parent / "data"
-    basepath = config["beamlines"]["path"]
+    # A relative data_path is relative to the config file, so the same data folder is
+    # used wherever flow-info is run from.
+    basepath = cfg_filename.parent / config["beamlines"].get("data_path", "data/")
+    config["beamlines"]["data_path"] = str(basepath)
     basepath.mkdir(exist_ok=True)
     log.debug(f"Using data path: {basepath}")
     return config
 
 
 @app.command()
-def summary(refresh_cache_info: bool = False):
-    items = ["name", "date", "flows", "runs", "run_logs", "missing_logs"]
+def summary(
+    refresh_cache_info: bool = typer.Option(
+        False,
+        help="Recount runs and logs for months still stored as JSON. Migrated months "
+        "are always counted from their database.",
+    ),
+):
+    items = ["name", "date", "flows", "runs", "run_logs", "missing_logs", "size", "storage"]
     table = Table(*items)
     config = get_config()
 
     fc = get_flows_cache(config)
     if refresh_cache_info:
-        fc.refresh_cache_info()
+        fc.data_manager.legacy.refresh_counts()
     for month in fc.summary():
         table.add_row(
             month["name"],
             month["year_month"],
             str(month["flows"]),
-            f"{month['runs']} ({humanize.naturalsize(month['runs_file_size'])})",
-            f"{month['run_logs']} ({humanize.naturalsize(month['run_logs_file_size'])})",
-            f"{month['missing_logs']}",
+            str(month["runs"]),
+            str(month["run_logs"]),
+            str(month["missing_logs"]),
+            humanize.naturalsize(month["size"]),
+            month["storage"],
         )
     console.print(table)
+
+
+@app.command()
+def migrate(
+    months: t.List[str] = typer.Argument(None, help="Year-months to migrate, e.g. 2026-10 2026-11."),
+    last: int = typer.Option(0, help="Migrate the N most recent months that are still JSON."),
+    all_months: bool = typer.Option(False, "--all", help="Migrate every month that is still JSON."),
+):
+    """Convert months stored as JSON to SQLite. The JSON files are kept."""
+    data_manager = data_manager_module.DataManager(get_config())
+    legacy = [
+        ym for ym in data_manager.get_available_runs() if data_manager.needs_migration(ym)
+    ]
+    if all_months:
+        selected = legacy
+    elif last:
+        selected = legacy[-last:]
+    elif months:
+        unknown = [ym for ym in months if ym not in legacy]
+        if unknown:
+            console.print(f"Not JSON months that can be migrated: {' '.join(unknown)}")
+            raise typer.Exit(code=1)
+        selected = sorted(months)
+    else:
+        console.print("Pass months to migrate, --last N or --all.")
+        console.print(f"Months still stored as JSON: {' '.join(legacy) or 'none'}")
+        raise typer.Exit(code=1)
+
+    if not selected:
+        console.print("Nothing to migrate, every month is already SQLite.")
+        return
+
+    table = Table("Month", "Flows", "Runs", "Run logs", "JSON size", "SQLite size")
+    for year_month in selected:
+        console.print(f"Migrating {year_month}...")
+        result = migration.migrate_month(data_manager, year_month, callback=console.print)
+        table.add_row(
+            result.year_month,
+            str(result.flows),
+            str(result.runs),
+            str(result.run_logs),
+            humanize.naturalsize(result.json_size),
+            humanize.naturalsize(result.db_size),
+        )
+    console.print(table)
+    console.print("The JSON files were kept, and are no longer used for migrated months.")
 
 
 UPLOAD_LIST_LIMIT = 50
@@ -440,6 +518,8 @@ def main(ctx: typer.Context, verbose: bool = False, log_level: str = "WARNING"):
 def main_cli():
     try:
         app()
+    except exc.MigrationRequired as e:
+        console.print(str(e))
     except exc.ConfigException as e:
         console.log(f"Config Error: {str(e)}")
 

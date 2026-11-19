@@ -37,8 +37,9 @@ def to_gcp_path(filename: pathlib.Path) -> str:
 
 
 WEBAPP_TASK_URL = "https://app.globus.org/activity/{task_id}"
-# Partially written files from an in-progress or crashed save.
-EXCLUDE_PATTERNS = ["*.tmp"]
+# Partially written files from an in-progress or crashed save or migration, and SQLite
+# journals, which only exist while a database is being written.
+EXCLUDE_PATTERNS = ["*.tmp", "*-journal", "*-wal", "*-shm"]
 
 
 @dataclasses.dataclass
