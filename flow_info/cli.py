@@ -270,26 +270,18 @@ def update(
                 console.print(f"Fetching: ({current}/{total})")
         if logs:
             console.print("Updating Run Logs...")
-            for (
-                cache,
-                caches,
-                batch,
-                total_batches,
-                log_cache_progress,
-                total,
-            ) in fc.update_run_logs(
-                lambda x, n: console.print(f"Updating runs {x}/{n}"), workers=workers
-            ):
-                console.print(
-                    f"Updating Cache {cache} ({(caches.index(cache) + 1)}/{len(caches)}), Batch ({batch}/{total_batches}) Total Progress {log_cache_progress:.2f}%"
-                )
+            fc.update_run_logs(
+                lambda year_month, done, total: console.print(
+                    f"Downloading Run Logs {run_logs_label(year_month, done, total)}"
+                ),
+                workers=workers,
+            )
         return
 
     with Progress() as progress:
 
         flows_task = progress.add_task("[red]Downloading Flows...")
         runs_task = progress.add_task("[green]Downloading Runs...")
-        run_logs_cache = progress.add_task("[yellow]Updating Cache...")
         run_logs_task = progress.add_task("[cyan]Downloading Run Logs...")
 
         if flows:
@@ -306,28 +298,26 @@ def update(
             # Set runs task to finished
             progress.update(runs_task, completed=1, total=1)
         if logs:
-            for (
-                cache,
-                caches,
-                batch,
-                total_batches,
-                log_cache_progress,
-                total,
-            ) in fc.update_run_logs(
-                lambda x, n: progress.update(
+            total = fc.update_run_logs(
+                lambda year_month, done, total: progress.update(
                     run_logs_task,
-                    completed=x,
-                    total=n,
-                    description=f"[cyan]Downloading Run Logs...({x}/{n})",
+                    completed=done,
+                    total=total,
+                    description="[cyan]Downloading Run Logs "
+                    + run_logs_label(year_month, done, total),
                 ),
                 workers,
-            ):
-                progress.update(
-                    run_logs_cache,
-                    completed=log_cache_progress,
-                    total=total,
-                    description=f"[yellow]Updating Cache...({cache} [{(caches.index(cache) + 1)}/{len(caches)}] -- Batch {batch}/{total_batches})",
-                )
+            )
+            if not total:
+                # Nothing to fetch, show the bar as finished rather than empty.
+                progress.update(run_logs_task, completed=1, total=1)
+
+
+def run_logs_label(year_month, done: int, total: int) -> str:
+    """Run logs progress, with the month currently being fetched."""
+    if not total:
+        return "(none to fetch)"
+    return f"{year_month or ''} ({done}/{total})".strip()
 
 
 @app.command()

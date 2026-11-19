@@ -11,9 +11,6 @@ log = logging.getLogger(__name__)
 
 class RunLogsCache:
 
-    # Run logs to fetch per batch, used for progress reporting.
-    BATCH_SIZE = 500
-
     def __init__(self, app: globus_sdk.GlobusApp, config, data_manager=None):
         self.app = app
         self.flows_client = globus_sdk.FlowsClient(app=self.app)
@@ -26,14 +23,8 @@ class RunLogsCache:
         """
         yield from self.data_manager.get_run_logs(year_month, runs)
 
-    def update_run_logs(self, year_month, callback, workers):
-        """Fetch and save logs for the month's runs that don't have one yet.
-
-        Each log is saved as soon as it's fetched, so memory use stays at about one log
-        per worker, and an interrupted update only loses the logs in flight.
-
-        Yields (batches_done, num_batches) after each batch.
-        """
+    def get_pending_run_logs(self, year_month) -> list:
+        """Ids of the month's runs whose logs should be fetched, oldest first."""
         missing = self.data_manager.runs_missing_logs(year_month)
         live = [(run_id, status) for run_id, start_time, status in missing
                 if not self.is_expired(start_time)]
@@ -45,24 +36,18 @@ class RunLogsCache:
             f"{len(live) - len(pending)} runs are unfinished, "
             f"{len(pending)} need to be fetched."
         )
-        batches = [
-            pending[i : i + self.BATCH_SIZE] for i in range(0, len(pending), self.BATCH_SIZE)
-        ]
-        if not batches:
-            yield 1, 1
-            return
-        for batch_num, batch in enumerate(batches):
-            asyncio.run(
-                self._update_run_logs_loop(
-                    batch,
-                    year_month,
-                    batch_num * self.BATCH_SIZE,
-                    len(pending),
-                    callback,
-                    workers,
-                )
-            )
-            yield batch_num + 1, len(batches)
+        return pending
+
+    def update_run_logs(self, year_month, run_ids: list, callback, workers):
+        """Fetch and save logs for run_ids, which are runs in year_month.
+
+        Each log is saved as soon as it's fetched, so memory use stays at about one log
+        per worker, and an interrupted update only loses the logs in flight.
+
+        :param callback: Called as callback(done) with the number of logs processed.
+        """
+        if run_ids:
+            asyncio.run(self._update_run_logs_loop(run_ids, year_month, callback, workers))
 
     async def _update_single_run_log(
         self,
@@ -97,8 +82,6 @@ class RunLogsCache:
         self,
         run_ids: list,
         year_month: str,
-        done_before: int,
-        total: int,
         callback: callable,
         workers: int,
     ):
@@ -117,12 +100,12 @@ class RunLogsCache:
         ]
 
         while not fetch_queue.empty():
-            callback(done_before + len(run_ids) - fetch_queue.qsize(), total)
+            callback(len(run_ids) - fetch_queue.qsize())
             await asyncio.sleep(1)
         log.debug(f"Finishing remaining tasks...")
 
         await fetch_queue.join()
-        callback(done_before + len(run_ids), total)
+        callback(len(run_ids))
 
         for task in tasks:
             task.cancel()

@@ -179,21 +179,33 @@ class FlowsCache:
                 months.append(year_month)
         return months
 
-    def update_run_logs(self, callback, workers: int):
-        caches = self.get_log_update_months()
+    def update_run_logs(self, callback, workers: int) -> int:
+        """Fetch run logs for every month that can still have them.
+
+        :param callback: Called as callback(year_month, done, total), where done and
+            total count logs across all months and year_month is the month being
+            fetched. It's called once with year_month None before fetching starts.
+        Returns the number of logs that were due to be fetched.
+        """
+        months = self.get_log_update_months()
         # Fail before fetching anything if a month needs migrating first.
-        self.data_manager.require_migrated(caches)
-        for cache_idx, cache in enumerate(caches):
-            log.debug(f"Fetching {cache} run logs...")
-            for batch, num_batches in self.run_logs_cache.update_run_logs(
-                cache, callback, workers
-            ):
-                # Get percentage of caches we've got through so far
-                cache_progress = (cache_idx) / len(caches) * 100
-                batch_progress = (batch) / num_batches * 100 / len(caches)
-                progress = cache_progress + batch_progress
-                total = 100
-                yield cache, caches, batch, num_batches, progress, total
+        self.data_manager.require_migrated(months)
+        pending = {ym: self.run_logs_cache.get_pending_run_logs(ym) for ym in months}
+        total = sum(len(run_ids) for run_ids in pending.values())
+        callback(None, 0, total)
+        done = 0
+        for year_month, run_ids in pending.items():
+            if not run_ids:
+                continue
+            log.debug(f"Fetching {len(run_ids)} {year_month} run logs...")
+            self.run_logs_cache.update_run_logs(
+                year_month,
+                run_ids,
+                lambda n: callback(year_month, done + n, total),
+                workers,
+            )
+            done += len(run_ids)
+        return total
 
     def _storage(self, year_month: str) -> str:
         if self.data_manager.is_legacy(year_month):
