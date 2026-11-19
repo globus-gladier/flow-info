@@ -140,8 +140,11 @@ class RunsCache:
         incomplete_buckets = []
         for bucket in self.get_buckets_by_date():
             saved_runs = self.data_manager.count_runs(bucket["value"])
-            log.info(f"{bucket['value']}: {saved_runs}/{bucket['count']}.")
-            if saved_runs < bucket["count"]:
+            # Refetch these too, or runs stored as ACTIVE would never get their final
+            # status, and their logs would never be fetched.
+            unfinished = self.data_manager.count_unfinished_runs(bucket["value"])
+            log.info(f"{bucket['value']}: {saved_runs}/{bucket['count']}, {unfinished} unfinished.")
+            if saved_runs < bucket["count"] or unfinished:
                 if bucket["count"] > MAX_SEARCH_LIMIT:
                     log.debug(
                         f"LARGE BUCKET DETECTED ({bucket['count']} for {bucket['value']}), FETCHING..."

@@ -20,6 +20,9 @@ from sqlalchemy.types import TypeDecorator
 
 log = logging.getLogger(__name__)
 
+# Run statuses that can still change. A log fetched in one of these is incomplete.
+UNFINISHED_STATUSES = ("ACTIVE", "INACTIVE")
+
 
 def _json_default(value):
     # ijson (used by flow_info.migration) parses non-integer numbers as Decimal.
@@ -211,12 +214,21 @@ class MonthDB:
         )
 
     def runs_missing_logs(self) -> list:
-        """(run_id, start_time) for every run without a stored log, oldest first."""
-        stmt = self._missing_logs_query(Run.run_id, Run.start_time).order_by(
+        """(run_id, start_time, status) for every run without a stored log, oldest first."""
+        stmt = self._missing_logs_query(Run.run_id, Run.start_time, Run.status).order_by(
             Run.start_time, Run.run_id
         )
         with Session(self.engine) as session:
             return [tuple(row) for row in session.execute(stmt)]
+
+    def count_unfinished_runs(self) -> int:
+        """Runs whose stored status is still in progress."""
+        with Session(self.engine) as session:
+            return session.scalar(
+                select(func.count())
+                .select_from(Run)
+                .where(Run.status.in_(UNFINISHED_STATUSES))
+            )
 
     def count_runs(self) -> int:
         with Session(self.engine) as session:

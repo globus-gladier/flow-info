@@ -4,6 +4,7 @@ import datetime
 import asyncio
 from zoneinfo import ZoneInfo
 from flow_info.data_manager import DataManager
+from flow_info.database import UNFINISHED_STATUSES
 
 log = logging.getLogger(__name__)
 
@@ -34,9 +35,14 @@ class RunLogsCache:
         Yields (batches_done, num_batches) after each batch.
         """
         missing = self.data_manager.runs_missing_logs(year_month)
-        pending = [run_id for run_id, start_time in missing if not self.is_expired(start_time)]
+        live = [(run_id, status) for run_id, start_time, status in missing
+                if not self.is_expired(start_time)]
+        # A log fetched before its run finishes would be saved incomplete and never
+        # fetched again, so unfinished runs wait until a runs update shows them done.
+        pending = [run_id for run_id, status in live if status not in UNFINISHED_STATUSES]
         log.debug(
-            f"{year_month}: {len(missing) - len(pending)} missing logs have expired, "
+            f"{year_month}: {len(missing) - len(live)} missing logs have expired, "
+            f"{len(live) - len(pending)} runs are unfinished, "
             f"{len(pending)} need to be fetched."
         )
         batches = [

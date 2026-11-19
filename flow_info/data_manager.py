@@ -122,10 +122,16 @@ class DataManager:
         self.get_db(year_month).save_run_logs([(run_id, run_log)], fetched_at)
 
     def runs_missing_logs(self, year_month: str) -> list:
-        """(run_id, start_time) for runs without a stored log, oldest first."""
+        """(run_id, start_time, status) for runs without a stored log, oldest first."""
         if not self.has_db(year_month):
             return []
         return self.get_db(year_month).runs_missing_logs()
+
+    def count_unfinished_runs(self, year_month: str) -> int:
+        """Runs stored as ACTIVE or INACTIVE, whose status needs refreshing."""
+        if not self.has_db(year_month):
+            return 0
+        return self.get_db(year_month).count_unfinished_runs()
 
     # Counts. A month with no data counts as empty, without creating a database.
 
